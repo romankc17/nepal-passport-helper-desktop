@@ -1,0 +1,90 @@
+{
+  "name": "nepal-passport-helper-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop companion for Nepal passport appointment monitoring and auto-booking",
+  "productName": "Nepal Passport Helper",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "screenshots": "playwright test e2e/screenshots.spec.ts",
+    "typecheck": "tsc --noEmit",
+    "prepackage": "npm run build",
+    "package": "electron-builder --dir",
+    "prepackage:win": "npm run build",
+    "package:win": "electron-builder --win nsis",
+    "package:win:zip": "electron-builder --win zip",
+    "prepackage:mac": "npm run build",
+    "package:mac": "electron-builder --mac zip dmg"
+  },
+  "build": {
+    "appId": "com.passporthelper.desktop",
+    "productName": "Nepal Passport Helper",
+    "asar": true,
+    "npmRebuild": false,
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "zip",
+        "dmg"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "publish": null
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-dropdown-menu": "^2.1.4",
+    "@radix-ui/react-select": "^2.1.4",
+    "@radix-ui/react-switch": "^1.1.2",
+    "@radix-ui/react-tooltip": "^1.1.6",
+    "@tanstack/react-query": "^5.62.11",
+    "lucide-react": "^0.469.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.3.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "jsdom": "^25.0.1",
+    "playwright": "^1.61.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.7.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
+  }
+}
