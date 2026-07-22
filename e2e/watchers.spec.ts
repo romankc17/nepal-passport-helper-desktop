@@ -55,7 +55,11 @@ test.describe('watchers', () => {
 
   test('expired auth ends the session cleanly', async () => {
     ctx.mock.setScenario('expired_auth');
-    await ctx.page.getByRole('button', { name: 'Check Rupandehi now' }).click();
+    // The background watcher may observe the expired token before the click.
+    await ctx.page
+      .getByRole('button', { name: 'Check Rupandehi now' })
+      .click({ timeout: 2000 })
+      .catch(() => undefined);
     // 401 + failed refresh → vault cleared → back to the login page.
     await ctx.page.waitForSelector('#username', { timeout: 20000 });
   });

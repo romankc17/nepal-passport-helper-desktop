@@ -6,6 +6,11 @@ import type {
   AppointmentListQuery,
   BookNowInput,
   ClientListQuery,
+  LabBookInput,
+  LabGenerateInput,
+  LabListQuery,
+  LabSubmitInput,
+  LocationKind,
   PreferencesPatch,
   QueueAddInput,
   WatcherCreateInput,
@@ -61,13 +66,26 @@ const desktopApi = {
     get: () => call(channels.overviewGet),
   },
   locations: {
-    list: (query: { kind: 'provinces' | 'districts' | 'providers'; parent?: number | string }) =>
+    list: (query: { kind: LocationKind; parent?: number | string }) =>
       call(channels.locationsList, query),
   },
   clients: {
     list: (query?: ClientListQuery) => call(channels.clientsList, query),
     get: (id: number) => call(channels.clientsGet, id),
     readyByLocation: () => call(channels.clientsReadyByLocation),
+    importPreview: (input: { application: Record<string, unknown> }) =>
+      call(channels.clientsImportPreview, input),
+    importConfirm: (input: {
+      fields: Record<string, unknown>;
+      allow_duplicate?: boolean;
+      idempotency_key: string;
+    }) => call(channels.clientsImportConfirm, input),
+  },
+  officialImport: {
+    open: () => call(channels.officialImportOpen),
+    list: () => call(channels.officialImportList),
+    get: (applicationId: string) => call(channels.officialImportGet, applicationId),
+    close: () => call(channels.officialImportClose),
   },
   queue: {
     add: (input: QueueAddInput) => call(channels.queueAdd, input),
@@ -127,6 +145,25 @@ const desktopApi = {
   },
   app: {
     version: () => call(channels.appVersion),
+  },
+  updater: {
+    check: () => call(channels.updateCheck),
+    status: () => call(channels.updateGetStatus),
+    install: () => call(channels.updateInstall),
+  },
+  lab: {
+    summary: () => call(channels.labSummary),
+    clients: (query?: LabListQuery) => call(channels.labClients, query),
+    detail: (id: number) => call(channels.labClientDetail, id),
+    generate: (input: LabGenerateInput) => call(channels.labGenerate, input),
+    submit: (input: LabSubmitInput) => call(channels.labSubmit, input),
+    book: (input: LabBookInput) => call(channels.labBook, input),
+    job: (batchId: string) => call(channels.labJob, batchId),
+    reconcile: (input?: { client_ids?: number[] }) => call(channels.labReconcile, input),
+    history: (query?: LabListQuery) => call(channels.labHistory, query),
+    cancel: (bookingId: number) => call(channels.labCancel, bookingId),
+    receipt: (bookingId: number) => call(channels.labReceipt, bookingId),
+    delete: (id: number) => call(channels.labDelete, id),
   },
   on,
 };

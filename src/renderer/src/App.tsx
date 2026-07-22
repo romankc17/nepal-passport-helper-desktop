@@ -5,6 +5,7 @@ import { Spinner } from './components/Spinner';
 import { OperationsProvider } from './operations';
 import { ActivityPage } from './pages/ActivityPage';
 import { AppointmentsPage } from './pages/AppointmentsPage';
+import { BookingLabPage } from './pages/BookingLabPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
@@ -63,6 +64,7 @@ export default function App() {
           <Route path="/watchers" element={<WatchersPage />} />
           <Route path="/queue" element={<QueuePage />} />
           <Route path="/clients" element={<ClientsPage />} />
+          <Route path="/booking-lab" element={<BookingLabPage />} />
           <Route path="/appointments" element={<AppointmentsPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/settings" element={<SettingsPage />} />

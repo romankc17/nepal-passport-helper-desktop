@@ -60,3 +60,9 @@ export function truncateMiddle(value: string | null | undefined, keep = 8): stri
 export function latinName(name: string): string {
   return name.split('/')[0]?.trim() || name;
 }
+
+// Country label worth showing next to an office name — "Nepal" is the default
+// and would just be noise, so only foreign-mission countries surface.
+export function foreignCountry(name: string | null | undefined): string {
+  return name && name !== 'Nepal' ? name : '';
+}

@@ -14,7 +14,7 @@ import { Pagination } from '../components/Pagination';
 import { Skeleton } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
 import { describeError } from '../lib/errors';
-import { formatDateTime } from '../lib/format';
+import { foreignCountry, formatDateTime } from '../lib/format';
 import { cn } from '../lib/utils';
 
 const tabs: { value: AppointmentStatus; label: string }[] = [
@@ -192,7 +192,15 @@ export function AppointmentsPage() {
                     <td className="px-3 py-3 font-mono text-xs text-slate-500">
                       {appointment.appointment_code}
                     </td>
-                    <td className="px-3 py-3 text-slate-600">{appointment.provider_name}</td>
+                    <td className="px-3 py-3 text-slate-600">
+                      {appointment.provider_name}
+                      {foreignCountry(appointment.country_name) && (
+                        <span className="text-xs text-slate-400">
+                          {' '}
+                          · {foreignCountry(appointment.country_name)}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 text-slate-600">{appointment.date}</td>
                     <td className="px-3 py-3 text-slate-600">
                       {appointment.start_time.slice(0, 5)}

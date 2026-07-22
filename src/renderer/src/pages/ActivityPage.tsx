@@ -75,11 +75,8 @@ export function ActivityPage() {
   });
 
   const providersQuery = useQuery({
-    queryKey: ['providers-for-filter'],
-    queryFn: async () => {
-      const groups = await api.clients.readyByLocation();
-      return groups.map((group) => ({ id: group.provider_id, name: group.provider_name }));
-    },
+    queryKey: queryKeys.clients({ page_size: 1 }),
+    queryFn: () => api.clients.list({ page_size: 1 }),
     staleTime: 60000,
   });
 
@@ -104,7 +101,7 @@ export function ActivityPage() {
             onValueChange={(value) => setParam('provider', value === 'all' ? '' : value)}
             options={[
               { value: 'all', label: 'All offices' },
-              ...(providersQuery.data ?? []).map((provider) => ({
+              ...(providersQuery.data?.providers ?? []).map((provider) => ({
                 value: String(provider.id),
                 label: provider.name,
               })),

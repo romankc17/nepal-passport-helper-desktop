@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import { BrowserWindow, app, powerMonitor } from 'electron';
+import { BrowserWindow, app, net, powerMonitor } from 'electron';
 import type { CheckOutcome, Watcher } from '../shared/types';
 import {
   ApiClient,
@@ -17,7 +17,11 @@ import { JsonStore } from './store';
 import { createTray } from './tray';
 import { Vault } from './vault';
 import { isE2E } from './e2e';
+import { getOfficialImportSession } from './official-import';
+import { OfficialApi, OfficialApiError } from './official-api';
+import { OfficialWorker } from './official-worker';
 import { applySessionSecurity, createMainWindow, focusOrCreateWindow } from './window';
+import { createUpdateManager } from './update';
 
 const isDev = !app.isPackaged;
 let isQuitting = false;
@@ -59,18 +63,32 @@ async function bootstrap(): Promise<void> {
       mainWindow?.webContents.send('auth-expired');
     },
   });
+  const officialImport = getOfficialImportSession({ getWindow: () => mainWindow });
+  const officialApi = new OfficialApi({ fetchFn: (url, init) => net.fetch(url, init) });
+  const officialWorker = new OfficialWorker(api, officialApi);
 
   const notificationsRef: { current: Notifications | null } = { current: null };
+  // Each finished run produces a fresh CheckOutcome object, so identity-based
+  // dedupe fires the booking notification exactly once per run — including
+  // manual "check now" runs, which don't end in the 'scheduled' state.
+  const notifiedOutcomes = new WeakSet<CheckOutcome>();
 
   const scheduler = new WatcherScheduler({
-    checkNow: (watcherId) => runServerCheck(api, watcherId),
+    checkNow: (watcherId, force) =>
+      runOfficialCheck(() =>
+        isE2E
+          ? api.watchersCheck(watcherId, { force })
+          : officialWorker.checkWatcher(watcherId, force),
+      ),
     onEvent: (event) => {
       if (event.type === 'watcher-state') {
         mainWindow?.webContents.send('watcher-state', event);
-        if (event.state === 'scheduled' && (event.lastResult?.bookedCount ?? 0) > 0) {
+        const outcome = event.lastResult;
+        if (outcome && (outcome.bookedCount ?? 0) > 0 && !notifiedOutcomes.has(outcome)) {
+          notifiedOutcomes.add(outcome);
           notificationsRef.current?.show({
             title: 'Appointment booked',
-            body: `${event.lastResult?.bookedCount} appointment(s) booked automatically.`,
+            body: `${outcome.bookedCount} appointment(s) booked automatically.`,
             route: '/appointments',
           });
         }
@@ -144,6 +162,8 @@ async function bootstrap(): Promise<void> {
       active: watcher.active,
     }));
 
+  const updateManager = createUpdateManager({ getWindow: () => mainWindow });
+
   registerIpc({
     api,
     scheduler,
@@ -153,6 +173,9 @@ async function bootstrap(): Promise<void> {
     isDev,
     getWindow: () => mainWindow,
     onQuit,
+    updateManager,
+    officialImport,
+    officialWorker,
     startWatchers: async () => {
       const watchers = await api.watchersList();
       scheduler.syncFromServer(toSyncItems(watchers));
@@ -186,9 +209,11 @@ async function bootstrap(): Promise<void> {
 
 // Translates the contract check endpoint into scheduler outcomes, mapping
 // ApiError codes onto captcha / auth-expired / permanent / retryable states.
-async function runServerCheck(api: ApiClient, watcherId: number): Promise<CheckOutcome> {
+async function runOfficialCheck(
+  check: () => Promise<import('../shared/types').WatcherCheckResult>,
+): Promise<CheckOutcome> {
   try {
-    const result = await api.watchersCheck(watcherId, { force: true });
+    const result = await check();
     const captcha = result.errors.some((error) => error.code === 'CAPTCHA_REQUIRED');
     if (captcha) {
       return { status: 'captcha', message: 'CAPTCHA required — resume manually after solving' };
@@ -199,6 +224,12 @@ async function runServerCheck(api: ApiClient, watcherId: number): Promise<CheckO
       bookedCount: result.booked.length,
     };
   } catch (error) {
+    if (error instanceof OfficialApiError) {
+      return {
+        status: error.kind === 'captcha' ? 'captcha' : 'retryable-error',
+        message: error.message,
+      };
+    }
     if (error instanceof ApiError) {
       if (AUTH_EXPIRED_CODES.has(error.code)) {
         return { status: 'auth-expired', errorCode: error.code, message: error.message };

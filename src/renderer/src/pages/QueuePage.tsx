@@ -1,4 +1,4 @@
-import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox, ListOrdered, Zap } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -16,7 +16,7 @@ import { Select } from '../components/Select';
 import { Skeleton } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
 import { describeError } from '../lib/errors';
-import { latinName } from '../lib/format';
+import { foreignCountry, latinName } from '../lib/format';
 import { useDebouncedValue } from '../lib/hooks';
 import { resolveProviderLocation } from '../lib/resolve-location';
 import { useOperations } from '../operations';
@@ -50,6 +50,7 @@ export function QueuePage() {
 
   const search = searchParams.get('q') ?? '';
   const locationFilter = searchParams.get('location') ?? '';
+  const countryFilter = searchParams.get('country') ?? '';
   const typeFilter = searchParams.get('type') ?? '';
   const statusFilter = searchParams.get('status') ?? '';
   const debouncedSearch = useDebouncedValue(search).toLowerCase();
@@ -75,23 +76,17 @@ export function QueuePage() {
     queryKey: queryKeys.readyByLocation,
     queryFn: () => api.clients.readyByLocation(),
     refetchInterval: 60000,
+    staleTime: 60000,
   });
 
   const watchersQuery = useQuery({
     queryKey: queryKeys.watchers,
     queryFn: () => api.watchers.list(),
     refetchInterval: 60000,
+    staleTime: 60000,
   });
 
   const queuedWatchers = (watchersQuery.data ?? []).filter((watcher) => watcher.queued_count > 0);
-
-  const watcherDetails = useQueries({
-    queries: queuedWatchers.map((watcher) => ({
-      queryKey: queryKeys.watcher(watcher.id),
-      queryFn: () => api.watchers.get(watcher.id),
-      refetchInterval: 30000,
-    })),
-  });
 
   const groups = readyQuery.data ?? [];
 
@@ -103,6 +98,12 @@ export function QueuePage() {
 
   const visibleGroups = groups
     .filter((group) => !locationFilter || String(group.provider_id) === locationFilter)
+    .filter(
+      (group) =>
+        !countryFilter ||
+        String(group.country_id ?? group.clients[0]?.appointment_country_id ?? '222') ===
+          countryFilter,
+    )
     .map((group) => ({
       ...group,
       clients: group.clients.filter((client) =>
@@ -199,7 +200,7 @@ export function QueuePage() {
       />
 
       <Card className="mb-6">
-        <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <Input
             aria-label="Search clients"
             placeholder="Search name…"
@@ -216,6 +217,16 @@ export function QueuePage() {
                 value: String(group.provider_id),
                 label: group.provider_name,
               })),
+            ]}
+          />
+          <Select
+            ariaLabel="Filter by country"
+            value={countryFilter || 'all'}
+            onValueChange={(value) => setParam('country', value === 'all' ? '' : value)}
+            options={[
+              { value: 'all', label: 'All countries' },
+              { value: '222', label: 'Nepal' },
+              { value: '307', label: 'Other (missions)' },
             ]}
           />
           <Select
@@ -268,7 +279,14 @@ export function QueuePage() {
             return (
               <Card key={group.provider_id}>
                 <CardHeader
-                  title={`${group.provider_name} · ${latinName(group.district_name)}`}
+                  title={[
+                    group.provider_name,
+                    group.district_name
+                      ? latinName(group.district_name)
+                      : foreignCountry(group.country_name),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                   action={
                     <div className="flex items-center gap-2">
                       <Button
@@ -348,20 +366,13 @@ export function QueuePage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {queuedWatchers.map((watcher, index) => {
-            const detail = watcherDetails[index];
-            return (
+          {queuedWatchers.map((watcher) => (
               <Card key={watcher.id}>
                 <CardHeader
                   title={`${watcher.provider_name} · ${watcher.queued_count} queued`}
                 />
-                {detail?.isPending ? (
-                  <CardBody>
-                    <Skeleton className="h-4 w-full" />
-                  </CardBody>
-                ) : (
-                  <ul className="divide-y divide-slate-100">
-                    {(detail?.data?.priority_bookings ?? []).map((booking) => (
+                <ul className="divide-y divide-slate-100">
+                  {(watcher.priority_bookings ?? []).map((booking) => (
                       <li key={booking.id} className="flex items-center gap-3 px-5 py-2.5">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-slate-800">
@@ -390,11 +401,9 @@ export function QueuePage() {
                         </Button>
                       </li>
                     ))}
-                  </ul>
-                )}
+                </ul>
               </Card>
-            );
-          })}
+          ))}
         </div>
       )}
 

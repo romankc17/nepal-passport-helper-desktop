@@ -12,7 +12,7 @@ import {
   ShieldAlert,
   Trash2,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Watcher, WatcherLoopState } from '../../../shared/types';
 import { api, queryKeys } from '../api';
 import { useAuth } from '../auth';
@@ -29,6 +29,7 @@ import { Dialog } from './Dialog';
 import { Input } from './Input';
 import { Label } from './Label';
 import { Skeleton } from './Skeleton';
+import { Spinner } from './Spinner';
 import { Switch } from './Switch';
 import { useToast } from './Toast';
 
@@ -64,6 +65,19 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
   const loopState: WatcherLoopState = live?.state ?? (watcher.active ? 'scheduled' : 'paused');
   const presentation = statePresentation[loopState];
   const checking = loopState === 'checking';
+
+  // When any check for this watcher finishes (manual or scheduled), the
+  // server-side data is stale: refresh the watcher queries so the new
+  // MonitorCheck row and updated slots show up immediately. The 'watchers'
+  // key prefix-matches both the list and this card's history query.
+  const prevStateRef = useRef<WatcherLoopState | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = live?.state;
+    if (prev === 'checking' && live?.state !== 'checking') {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
+    }
+  }, [live?.state, queryClient]);
 
   const invalidateWatchers = async () => {
     await queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
@@ -107,7 +121,18 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
   const checkNow = () => {
     window.desktop.scheduler
       .checkNow(watcher.id)
-      .then(() => refresh())
+      .then(async (result) => {
+        if (!result.requested) {
+          toast(
+            result.reason === 'auth-expired'
+              ? 'Your session expired — sign in again to run checks'
+              : 'A check is already running for this watcher',
+            'error',
+          );
+          return;
+        }
+        await refresh();
+      })
       .catch((error) => toast(describeError(error, 'Could not start a check'), 'error'));
   };
 
@@ -141,7 +166,14 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
             </p>
           </div>
         </div>
-        <Badge tone={presentation.tone}>{presentation.label}</Badge>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {watcher.country_name && (
+            <Badge tone={watcher.country_name === 'Nepal' ? 'gray' : 'blue'}>
+              {watcher.country_name}
+            </Badge>
+          )}
+          <Badge tone={presentation.tone}>{presentation.label}</Badge>
+        </div>
       </div>
 
       {loopState === 'captcha' && (
@@ -190,6 +222,12 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
                 <BellOff className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" /> Off
               </>
             )}
+          </dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-slate-400">Alert email</dt>
+          <dd className="truncate font-medium text-slate-700">
+            {watcher.notification_email || '—'}
           </dd>
         </div>
         <div>
@@ -313,6 +351,11 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
 
       {historyExpanded && (
         <div className="border-t border-slate-100 px-5 py-3">
+          {checking && (
+            <p className="mb-2 flex items-center gap-2 text-xs font-medium text-primary">
+              <Spinner size="sm" /> Checking now — results appear here when it finishes…
+            </p>
+          )}
           {historyQuery.isPending ? (
             <div className="flex flex-col gap-2">
               <Skeleton className="h-4 w-full" />
@@ -371,6 +414,7 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
   const [daysAhead, setDaysAhead] = useState(String(watcher.days_ahead));
   const [desiredBookings, setDesiredBookings] = useState(String(watcher.desired_bookings));
   const [notify, setNotify] = useState(watcher.notify);
+  const [notificationEmail, setNotificationEmail] = useState(watcher.notification_email || '');
 
   const updateMutation = useMutation({
     mutationFn: () =>
@@ -379,6 +423,7 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
         days_ahead: Number(daysAhead),
         desired_bookings: Number(desiredBookings),
         notify,
+        notification_email: notificationEmail.trim(),
       }),
     onSuccess: async () => {
       toast('Watcher settings saved');
@@ -454,6 +499,19 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
             checked={notify}
             onCheckedChange={setNotify}
           />
+        </div>
+        <div>
+          <Label htmlFor={`email-${watcher.id}`}>Alert email</Label>
+          <Input
+            id={`email-${watcher.id}`}
+            type="email"
+            placeholder="email@example.com"
+            value={notificationEmail}
+            onChange={(event) => setNotificationEmail(event.target.value)}
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            Leave blank to disable email alerts for this watcher.
+          </p>
         </div>
       </div>
     </Dialog>

@@ -16,6 +16,11 @@ import {
   validateAppointmentListQuery,
   validateBookNowInput,
   validateClientListQuery,
+  validateLabBookInput,
+  validateLabGenerateInput,
+  validateLabJobBatchId,
+  validateLabListQuery,
+  validateLabSubmitInput,
   validateLocationsQuery,
   validateLoginInput,
   validatePreferencesPatch,
@@ -23,6 +28,9 @@ import {
   validateWatcherCheckInput,
   validateWatcherCreateInput,
   validateWatcherSettingsPatch,
+  validateImportConfirmInput,
+  validateImportPreviewInput,
+  validateWptId,
 } from '../shared/ipc-contract';
 import type { AppSettings, SessionInfo, WatcherRuntime } from '../shared/types';
 import { ApiClient, ApiError, AUTH_EXPIRED_CODES } from './api-client';
@@ -31,7 +39,10 @@ import { SettingsManager, StoredConfig } from './settings';
 import { JsonStore } from './store';
 import { Vault, VaultUnavailableError } from './vault';
 import { isE2E } from './e2e';
+import type { OfficialImportSession } from './official-import';
+import type { OfficialWorker } from './official-worker';
 import { isTrustedRendererFrame } from './window';
+import type { UpdateManager } from './update';
 
 interface ErrorShape {
   code: string;
@@ -48,6 +59,9 @@ export interface IpcDeps {
   isDev: boolean;
   getWindow: () => BrowserWindow | null;
   onQuit: () => void;
+  updateManager: UpdateManager;
+  officialImport: OfficialImportSession;
+  officialWorker: OfficialWorker;
   // Fetches the server watcher list and reconciles scheduler loops.
   startWatchers: () => Promise<void>;
   stopWatchers: () => void;
@@ -161,6 +175,21 @@ export function registerIpc(deps: IpcDeps): void {
   handle(channels.clientsList, (raw: unknown) => api.clientsList(validateClientListQuery(raw)));
   handle(channels.clientsGet, (raw: unknown) => api.clientsGet(asId(raw)));
   handle(channels.clientsReadyByLocation, () => api.clientsReadyByLocation());
+  handle(channels.clientsImportPreview, (raw: unknown) =>
+    api.clientsImportPreview(validateImportPreviewInput(raw)),
+  );
+  handle(channels.clientsImportConfirm, (raw: unknown) =>
+    api.clientsImportConfirm(validateImportConfirmInput(raw)),
+  );
+
+  // --- Official portal import ---
+
+  handle(channels.officialImportOpen, () => deps.officialImport.open());
+  handle(channels.officialImportList, () => deps.officialImport.listApplications());
+  handle(channels.officialImportGet, (raw: unknown) =>
+    deps.officialImport.getApplication(validateWptId(raw)),
+  );
+  handle(channels.officialImportClose, () => deps.officialImport.close());
 
   // --- Queue & booking ---
 
@@ -171,9 +200,42 @@ export function registerIpc(deps: IpcDeps): void {
   });
   handle(channels.queueRemove, (raw: unknown) => api.queueRemove(asIdArray(raw, 'bookingIds')));
   handle(channels.queueBookNow, async (raw: unknown) => {
-    const result = await api.bookNow(validateBookNowInput(raw));
+    const input = validateBookNowInput(raw);
+    // The E2E server is an in-memory UI fixture; production always executes
+    // the official calls locally through OfficialWorker below.
+    if (isE2E) return api.bookNow(input);
+    const queued = await api.queueAdd(input);
+    const check = await deps.officialWorker.checkWatcher(queued.watcher.id, true, input.slots);
+    const detail = await api.watchersGet(queued.watcher.id);
+    const byClient = new Map(detail.recent_bookings.map((item) => [item.client_id, item]));
+    const results = input.client_ids.map((clientId) => {
+      const booking = byClient.get(clientId);
+      const skipped = queued.skipped.find((item) => item.client_id === clientId);
+      if (booking?.status === 'booked') {
+        return {
+          client_id: clientId,
+          booking_id: booking.id,
+          outcome: 'booked' as const,
+          appointment: { date: booking.date!, start_time: booking.start_time! },
+        };
+      }
+      if (booking?.status === 'failed') {
+        return {
+          client_id: clientId,
+          booking_id: booking.id,
+          outcome: 'failed' as const,
+          error: booking.error ?? 'Official booking failed',
+        };
+      }
+      return {
+        client_id: clientId,
+        booking_id: booking?.id ?? null,
+        outcome: 'queued' as const,
+        error: skipped?.reason,
+      };
+    });
     await deps.resyncWatchers();
-    return result;
+    return { watcher: check.watcher, results };
   });
   handle(channels.queueProgress, (raw: unknown) => api.progress(asIdArray(raw, 'bookingIds')));
 
@@ -204,9 +266,11 @@ export function registerIpc(deps: IpcDeps): void {
     scheduler.resume(watcher.id);
     return watcher;
   });
-  handle(channels.watchersCheck, (rawId: unknown, rawOpts: unknown) =>
-    api.watchersCheck(asId(rawId), validateWatcherCheckInput(rawOpts)),
-  );
+  handle(channels.watchersCheck, (rawId: unknown, rawOpts: unknown) => {
+    const opts = validateWatcherCheckInput(rawOpts);
+    if (isE2E) return api.watchersCheck(asId(rawId), opts);
+    return deps.officialWorker.checkWatcher(asId(rawId), opts.force ?? false, opts.slots);
+  });
   handle(channels.watchersDelete, async (raw: unknown) => {
     const id = asId(raw);
     await api.watchersDelete(id);
@@ -226,15 +290,20 @@ export function registerIpc(deps: IpcDeps): void {
     api.appointmentsList(validateAppointmentListQuery(raw)),
   );
   handle(channels.appointmentsCancel, async (raw: unknown) => {
-    await api.appointmentsCancel(asId(raw, 'bookingId'));
+    if (isE2E) {
+      await api.appointmentsCancel(asId(raw, 'bookingId'));
+      return { cancelled: true };
+    }
+    await deps.officialWorker.cancelBooking(asId(raw, 'bookingId'));
     return { cancelled: true };
   });
   handle(channels.appointmentsReceipt, (raw: unknown) =>
     api.appointmentsReceipt(asId(raw, 'bookingId')),
   );
-  handle(channels.appointmentsReconcile, (raw: unknown) =>
-    api.appointmentsReconcile(validateOptionalIdArray(raw, 'clientIds')),
-  );
+  handle(channels.appointmentsReconcile, (raw: unknown) => {
+    const clientIds = validateOptionalIdArray(raw, 'clientIds');
+    return isE2E ? api.appointmentsReconcile(clientIds) : deps.officialWorker.reconcile(clientIds);
+  });
 
   // Receipts: fetched in main, saved via native dialog, written to disk.
   handle(
@@ -291,8 +360,8 @@ export function registerIpc(deps: IpcDeps): void {
   // --- Scheduler runtime ---
 
   handle(channels.schedulerCheckNow, (raw: unknown) => {
-    scheduler.checkNow(asId(raw));
-    return { requested: true };
+    const result = scheduler.checkNow(asId(raw));
+    return { requested: result.accepted, reason: result.reason ?? null };
   });
   handle(channels.schedulerPause, (raw: unknown) => {
     scheduler.pause(asId(raw));
@@ -326,4 +395,40 @@ export function registerIpc(deps: IpcDeps): void {
     return { quitting: true };
   });
   handle(channels.appVersion, () => app.getVersion());
+
+  // --- Updater ---
+
+  handle(channels.updateCheck, async () => {
+    await deps.updateManager.checkForUpdates();
+    return { requested: true };
+  });
+  handle(channels.updateGetStatus, () => deps.updateManager.getStatus());
+  handle(channels.updateInstall, () => {
+    deps.updateManager.installUpdate();
+    return { requested: true };
+  });
+
+  // --- Booking Lab ---
+
+  handle(channels.labSummary, () => api.labSummary());
+  handle(channels.labClients, (raw: unknown) => api.labClients(validateLabListQuery(raw)));
+  handle(channels.labClientDetail, (raw: unknown) => api.labClientDetail(asId(raw)));
+  handle(channels.labGenerate, (raw: unknown) => api.labGenerate(validateLabGenerateInput(raw)));
+  handle(channels.labSubmit, (raw: unknown) =>
+    deps.officialWorker.submitLab(validateLabSubmitInput(raw)),
+  );
+  handle(channels.labBook, (raw: unknown) =>
+    deps.officialWorker.bookLab(validateLabBookInput(raw)),
+  );
+  handle(channels.labJob, (raw: unknown) => api.labJob(validateLabJobBatchId(raw)));
+  handle(channels.labReconcile, (raw: unknown) => {
+    const clientIds = validateOptionalIdArray(raw, 'client_ids');
+    return deps.officialWorker.reconcile(clientIds, true);
+  });
+  handle(channels.labHistory, (raw: unknown) => api.labHistory(validateLabListQuery(raw)));
+  handle(channels.labCancel, (raw: unknown) =>
+    deps.officialWorker.cancelBooking(asId(raw, 'bookingId')),
+  );
+  handle(channels.labReceipt, (raw: unknown) => api.labReceipt(asId(raw, 'bookingId')));
+  handle(channels.labDelete, (raw: unknown) => api.labDelete(asId(raw)));
 }

@@ -23,6 +23,8 @@ export interface TestApp {
 export async function launchTestApp(options?: {
   userDataDir?: string;
   portOverride?: number;
+  /** Extra environment variables for the launched app (e.g. EPP_OFFICIAL_ORIGIN). */
+  env?: Record<string, string>;
 }): Promise<TestApp> {
   const mock = new MockServer();
   const port = options?.portOverride ?? (await mock.listen());
@@ -38,6 +40,7 @@ export async function launchTestApp(options?: {
       EPP_E2E: '1',
       EPP_USER_DATA_DIR: userDataDir,
       EPP_DEV_API_URL: `http://127.0.0.1:${port}`,
+      ...options?.env,
     },
     timeout: 30000,
   });

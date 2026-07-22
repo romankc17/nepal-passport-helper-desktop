@@ -7,6 +7,8 @@ export interface ResolvedLocation {
   district_id: number | string;
   province_id: number | string;
   provider_name: string;
+  country_id?: number | string;
+  country_name?: string;
 }
 
 const cache = new Map<string, ResolvedLocation | null>();
@@ -35,6 +37,8 @@ async function doResolve(
       district_id: watcher.district_id,
       province_id: watcher.province_id,
       provider_name: watcher.provider_name,
+      ...(watcher.country_id !== undefined ? { country_id: watcher.country_id } : {}),
+      ...(watcher.country_name ? { country_name: watcher.country_name } : {}),
     };
   }
 
@@ -59,6 +63,21 @@ async function doResolve(
         };
       }
     }
+  }
+
+  // Not a Nepal office — try the foreign missions (country 307 lists them
+  // directly as providers, with no province/district).
+  const missions = await window.desktop.locations.list({ kind: 'providers', parent: '307' });
+  const mission = missions.find((entry) => String(entry.id) === String(providerId));
+  if (mission) {
+    return {
+      provider_id: mission.id,
+      district_id: '',
+      province_id: '',
+      provider_name: mission.name || providerName,
+      country_id: '307',
+      country_name: 'Other',
+    };
   }
   return null;
 }

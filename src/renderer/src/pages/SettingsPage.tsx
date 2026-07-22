@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
-import { api, queryKeys } from '../api';
+import { api, onUpdateStatus, queryKeys } from '../api';
+import type { UpdateStatus } from '../../../shared/types';
 import { useAuth } from '../auth';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -42,24 +43,58 @@ function SettingRow({
   );
 }
 
+function updateHint(status: UpdateStatus | null): string | undefined {
+  if (!status) return undefined;
+  switch (status.type) {
+    case 'idle':
+      return undefined;
+    case 'checking':
+      return 'Checking for updates…';
+    case 'available':
+      return `Version ${status.version} is available`;
+    case 'downloading':
+      return 'Downloading update…';
+    case 'downloaded':
+      return `Version ${status.version} downloaded`;
+    case 'up-to-date':
+      return 'You are on the latest version';
+    case 'error':
+      return status.message;
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${Number((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
+}
+
 export function SettingsPage() {
   const { toast } = useToast();
   const { session, signOut } = useAuth();
   const queryClient = useQueryClient();
   const [signOutOpen, setSignOutOpen] = useState(false);
   const [apiUrlDraft, setApiUrlDraft] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   const settingsQuery = useQuery({
     queryKey: queryKeys.settings,
     queryFn: () => api.settings.get(),
+    staleTime: 60000,
   });
   const preferencesQuery = useQuery({
     queryKey: queryKeys.preferences,
     queryFn: () => api.preferences.get(),
+    staleTime: 60000,
   });
   const meQuery = useQuery({
     queryKey: ['me'],
     queryFn: () => api.account.me(),
+    staleTime: 60000,
   });
 
   useEffect(() => {
@@ -67,6 +102,26 @@ export function SettingsPage() {
       setApiUrlDraft(settingsQuery.data.apiUrl ?? '');
     }
   }, [settingsQuery.data, apiUrlDraft]);
+
+  useEffect(() => {
+    let active = true;
+    void api.app.version().then((version) => {
+      if (active) setAppVersion(version);
+    });
+    void api.updater.status().then((status) => {
+      if (active) setUpdateStatus(status);
+    });
+    const unsubscribe = onUpdateStatus((status) => {
+      setUpdateStatus(status);
+      if (status.type !== 'checking') {
+        setCheckingUpdate(false);
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   const settingsMutation = useMutation({
     mutationFn: (patch: Parameters<typeof api.settings.update>[0]) => api.settings.update(patch),
@@ -373,6 +428,61 @@ export function SettingsPage() {
                 </li>
               ))}
             </ul>
+          )}
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader title="Update" />
+        <CardBody>
+          <SettingRow
+            label={appVersion ? `Version ${appVersion}` : 'Checking version…'}
+            hint={updateHint(updateStatus)}
+            control={
+              <div className="flex items-center gap-2">
+                {updateStatus?.type === 'downloaded' ? (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => void api.updater.install()}
+                  >
+                    Install and restart
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={checkingUpdate}
+                    onClick={() => {
+                      setCheckingUpdate(true);
+                      void api.updater.check().catch((error: unknown) => {
+                        setCheckingUpdate(false);
+                        toast(describeError(error, 'Update check failed'), 'error');
+                      });
+                    }}
+                  >
+                    Check for updates
+                  </Button>
+                )}
+              </div>
+            }
+          />
+          {updateStatus?.type === 'downloading' && (
+            <div className="mt-2">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${Math.round(updateStatus.percent)}%` }}
+                />
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                {Math.round(updateStatus.percent)}% — {formatBytes(updateStatus.transferred)} /{' '}
+                {formatBytes(updateStatus.total)}
+              </p>
+            </div>
+          )}
+          {updateStatus?.type === 'error' && (
+            <p className="mt-2 text-sm text-danger">{updateStatus.message}</p>
           )}
         </CardBody>
       </Card>

@@ -1,5 +1,7 @@
-import { LogOut } from 'lucide-react';
+import { Download, LogOut, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { api, onUpdateStatus } from '../api';
+import type { UpdateStatus } from '../../../shared/types';
 import { cn } from '../lib/utils';
 import { Button } from './Button';
 
@@ -10,10 +12,13 @@ interface TopBarProps {
   sessionOffline: boolean;
   onSignOut: () => void;
   signingOut: boolean;
+  onRefresh?: () => void;
+  isFetching?: boolean;
 }
 
-export function TopBar({ userName, sessionOffline, onSignOut, signingOut }: TopBarProps) {
+export function TopBar({ userName, sessionOffline, onSignOut, signingOut, onRefresh, isFetching }: TopBarProps) {
   const [status, setStatus] = useState<ConnectionStatus>(sessionOffline ? 'offline' : 'online');
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: 'idle' });
 
   useEffect(() => {
     setStatus(sessionOffline ? 'offline' : 'online');
@@ -26,7 +31,24 @@ export function TopBar({ userName, sessionOffline, onSignOut, signingOut }: TopB
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    void api.updater.status().then((nextStatus) => {
+      if (active) setUpdateStatus(nextStatus);
+    });
+    const unsubscribe = onUpdateStatus(setUpdateStatus);
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
   const online = status === 'online';
+
+  const handleRefresh = () => {
+    if (!onRefresh) return;
+    onRefresh();
+  };
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
@@ -42,8 +64,29 @@ export function TopBar({ userName, sessionOffline, onSignOut, signingOut }: TopB
         />
         <span className="text-xs text-slate-500">{online ? 'Connected' : 'Offline'}</span>
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        {updateStatus.type === 'downloaded' && (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => void api.updater.install()}
+            aria-label={`Update app to version ${updateStatus.version}`}
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            Update app
+          </Button>
+        )}
         <span className="text-sm font-medium text-slate-700">{userName}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleRefresh}
+          aria-label="Refresh page"
+          title="Refresh current page"
+        >
+          <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} aria-hidden="true" />
+          Refresh
+        </Button>
         <Button
           variant="ghost"
           size="sm"

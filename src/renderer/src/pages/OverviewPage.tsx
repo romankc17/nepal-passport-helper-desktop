@@ -12,6 +12,7 @@ import { api, queryKeys } from '../api';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card, CardBody, CardHeader } from '../components/Card';
+import { FavoriteLocationsCard } from '../components/FavoriteLocationsCard';
 import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
 import { formatCountdown, formatRelativeTime } from '../lib/format';
@@ -72,12 +73,7 @@ export function OverviewPage() {
     queryKey: queryKeys.overview,
     queryFn: () => api.overview.get(),
     refetchInterval: 30000,
-  });
-
-  const activityQuery = useQuery({
-    queryKey: queryKeys.activity({ page: 1 }),
-    queryFn: () => api.activity.list({ page: 1 }),
-    refetchInterval: 30000,
+    staleTime: 30000,
   });
 
   const overview = overviewQuery.data;
@@ -90,16 +86,9 @@ export function OverviewPage() {
     .filter((entry) => entry.nextRunAt !== undefined)
     .sort((a, b) => (a.nextRunAt ?? 0) - (b.nextRunAt ?? 0))
     .slice(0, 6);
-  const watcherName = new Map<number, string>();
-
-  const watchersQuery = useQuery({
-    queryKey: queryKeys.watchers,
-    queryFn: () => api.watchers.list(),
-    refetchInterval: 60000,
-  });
-  for (const watcher of watchersQuery.data ?? []) {
-    watcherName.set(watcher.id, watcher.provider_name);
-  }
+  const watcherName = new Map(
+    (overview?.upcoming_checks ?? []).map((watcher) => [watcher.watcher_id, watcher.provider_name]),
+  );
 
   return (
     <div>
@@ -167,6 +156,9 @@ export function OverviewPage() {
           to="/activity"
         />
       </div>
+      <div className="mt-6">
+        <FavoriteLocationsCard />
+      </div>
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader
@@ -208,16 +200,16 @@ export function OverviewPage() {
             }
           />
           <CardBody>
-            {activityQuery.isPending ? (
+            {overviewQuery.isPending ? (
               <div className="flex flex-col gap-2">
                 <Skeleton className="h-5 w-full" />
                 <Skeleton className="h-5 w-2/3" />
               </div>
-            ) : (activityQuery.data?.items.length ?? 0) === 0 ? (
+            ) : (overview?.recent_activity.length ?? 0) === 0 ? (
               <p className="text-sm text-slate-400">No activity yet.</p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {activityQuery.data?.items.slice(0, 8).map((item) => (
+                {overview?.recent_activity.slice(0, 8).map((item) => (
                   <li key={String(item.id)} className="flex items-center justify-between gap-4 py-2">
                     <span className="flex min-w-0 items-center gap-2">
                       <Badge tone={item.status === 'success' || item.status === 'booked' ? 'green' : 'gray'}>

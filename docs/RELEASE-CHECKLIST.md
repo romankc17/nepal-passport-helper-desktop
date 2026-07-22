@@ -10,7 +10,11 @@
 
 ## 1. Version & configuration
 
-- [ ] Bump `version` in `package.json` (semver).
+- [ ] Keep the distribution repository public. Auto-update must not ship a
+      private-repository token inside the application.
+- [ ] Bump `major.minor` in `package.json` only for a planned major/minor
+      release. CI uses the GitHub workflow run number as the patch version on
+      every `main` push.
 - [ ] Set the production API URL: `PRODUCTION_API_URL` in
       `src/main/settings.ts`. Production builds lock to this value and ignore
       `EPP_DEV_API_URL` and any stored dev override.
@@ -40,17 +44,22 @@ macOS (`macos-latest`):
 
 ## 4. Release
 
-- [ ] Tag `vX.Y.Z` and push — CI builds signed artifacts on both runners and
-      attaches them (plus `.blockmap` files) to a GitHub release.
+- [ ] Push or merge to `main`. CI creates `v<major>.<minor>.<run-number>` and
+      publishes `.exe`, `.dmg`, `.zip`, `.blockmap`, `latest.yml`, and
+      `latest-mac.yml` assets to a GitHub release.
+- [ ] For first-time installs, direct users to GitHub → Releases → Latest and
+      have them download `.exe` on Windows or `.dmg` on macOS.
 - [ ] Sanity-check the Windows installer on a clean machine (install, sign in,
       watcher runs, receipt download, tray quit).
 - [ ] Sanity-check the macOS dmg likewise (Gatekeeper should not warn once
       signed + notarized).
 
-## 5. Auto-update (future)
+## 5. Auto-update
 
-- [ ] The release job already publishes installers with blockmaps in the layout
-      `electron-updater` expects. Wiring `electron-updater` into the app
-      (`publish` provider in the electron-builder config + update check in
-      main) is deliberately left for a later phase — keep `publish: null`
-      locally until then.
+- [ ] Confirm packaged builds check for updates on launch (logs in main process).
+      Dev/unpackaged builds skip auto-check; the Settings → Update card still
+      shows the current version and lets users check manually.
+- [ ] After a release is published, verify a packaged build from the previous
+      version detects the new release and prompts to install.
+- [ ] If auto-update is ever disabled for a release, set the `GH_TOKEN` env var
+      only on CI runners and never commit it.

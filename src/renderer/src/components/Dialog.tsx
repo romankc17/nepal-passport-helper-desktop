@@ -11,6 +11,8 @@ interface DialogProps {
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** Extra classes for the content panel (e.g. a wider max-width). */
+  className?: string;
 }
 
 export function Dialog({
@@ -21,6 +23,7 @@ export function Dialog({
   children,
   footer,
   wide,
+  className,
 }: DialogProps) {
   return (
     <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -31,6 +34,7 @@ export function Dialog({
             'fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-full -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg bg-white p-6 shadow-xl',
             'focus:outline-none',
             wide ? 'max-w-2xl' : 'max-w-md',
+            className,
           )}
         >
           <div className="mb-4 flex items-start justify-between gap-4">

@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { useIsFetching, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { OperationPanel } from './OperationPanel';
 import { TopBar } from './TopBar';
@@ -25,9 +26,28 @@ function playBeep(): void {
   }
 }
 
+const PAGE_QUERIES: Record<string, string[]> = {
+  '/': ['overview', 'activity', 'watchers'],
+  '/watchers': ['watchers', 'preferences'],
+  '/queue': ['clients', 'watchers'],
+  '/clients': ['clients', 'watchers'],
+  '/booking-lab': ['lab-summary', 'lab-clients', 'lab-history', 'watchers'],
+  '/appointments': ['appointments', 'clients', 'overview'],
+  '/activity': ['activity'],
+  '/settings': ['settings', 'preferences'],
+};
+
 export function AppLayout() {
   const { session, signOut, signingOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+
+  const pageQueryKeys = useMemo(() => PAGE_QUERIES[location.pathname] ?? [], [location.pathname]);
+
+  const isFetching = useIsFetching({
+    predicate: (query) => pageQueryKeys.includes(String(query.queryKey[0])),
+  }) > 0;
 
   useEffect(() => {
     const unsubscribeSound = window.desktop.on('play-sound', () => playBeep());
@@ -44,6 +64,12 @@ export function AppLayout() {
     };
   }, [navigate, signOut]);
 
+  const handleRefresh = () => {
+    for (const key of pageQueryKeys) {
+      void queryClient.invalidateQueries({ queryKey: [key] });
+    }
+  };
+
   return (
     <div className="flex h-full">
       <Sidebar />
@@ -53,6 +79,8 @@ export function AppLayout() {
           sessionOffline={session?.offline ?? false}
           onSignOut={() => void signOut()}
           signingOut={signingOut}
+          onRefresh={handleRefresh}
+          isFetching={isFetching}
         />
         <main className="flex-1 overflow-y-auto p-6">
           <Outlet />

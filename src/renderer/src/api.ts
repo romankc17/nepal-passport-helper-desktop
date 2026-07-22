@@ -1,4 +1,4 @@
-import type { ActivityQuery, AppointmentListQuery, ClientListQuery } from '../../shared/types';
+import type { ActivityQuery, AppointmentListQuery, ClientListQuery, LabListQuery, UpdateStatus } from '../../shared/types';
 
 // Typed wrappers over window.desktop + the TanStack Query key factory.
 // The renderer never talks to the Django API directly — all traffic goes
@@ -18,6 +18,10 @@ export const queryKeys = {
   activity: (query?: ActivityQuery) => ['activity', query] as const,
   preferences: ['preferences'] as const,
   settings: ['settings'] as const,
+  labSummary: ['lab-summary'] as const,
+  labClients: (query?: LabListQuery) => ['lab-clients', query] as const,
+  labClient: (id: number) => ['lab-clients', id] as const,
+  labHistory: (query?: LabListQuery) => ['lab-history', query] as const,
 };
 
 export const api = {
@@ -34,4 +38,11 @@ export const api = {
   preferences: window.desktop.preferences,
   scheduler: window.desktop.scheduler,
   settings: window.desktop.settings,
+  updater: window.desktop.updater,
+  app: window.desktop.app,
+  lab: window.desktop.lab,
 };
+
+export function onUpdateStatus(callback: (status: UpdateStatus) => void): () => void {
+  return window.desktop.on('update-status', callback as (payload: unknown) => void);
+}

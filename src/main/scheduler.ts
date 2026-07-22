@@ -1,4 +1,5 @@
 import type {
+  CheckNowResult,
   CheckOutcome,
   SchedulerEvent,
   WatcherLoopState,
@@ -7,7 +8,7 @@ import type {
 } from '../shared/types';
 
 export interface SchedulerDeps {
-  checkNow: (watcherId: number) => Promise<CheckOutcome>;
+  checkNow: (watcherId: number, force: boolean) => Promise<CheckOutcome>;
   onEvent: (event: SchedulerEvent) => void;
   now: () => number;
   setTimeout: (fn: () => void, ms: number) => unknown;
@@ -26,6 +27,11 @@ interface LoopRecord {
   queuedForRun: boolean;
   lastResult?: CheckOutcome;
   nextRunAt?: number;
+  forceNextRun: boolean;
+  /** One-off manual run without a persistent loop — settle to a resting state. */
+  manualOnce?: boolean;
+  /** Paused/captcha state to restore after a one-off manual run. */
+  restoreStateAfterManual?: WatcherLoopState;
 }
 
 const MAX_BACKOFF_MS = 30 * 60 * 1000;
@@ -83,15 +89,29 @@ export class WatcherScheduler {
     }
   }
 
-  // Manual immediate run. Reuses the in-flight guard, so it never creates a
-  // duplicate loop; the pending timer is rescheduled from the result.
-  checkNow(watcherId: number): void {
-    const loop = this.loops.get(watcherId);
-    if (!loop || this.authExpired) return;
-    if (loop.inFlight || loop.queuedForRun) return;
-    if (loop.state === 'paused' || loop.state === 'captcha') return;
+  // Manual immediate run. A click is explicit user intent, so it works even
+  // without a loop (inactive watcher) and on paused/captcha loops — as a
+  // one-off that never resumes a schedule. Returns whether the run was
+  // accepted; the IPC layer surfaces rejections so the UI can explain why
+  // nothing happened instead of silently ignoring the click.
+  checkNow(watcherId: number): CheckNowResult {
+    if (this.authExpired) return { accepted: false, reason: 'auth-expired' };
+    let loop = this.loops.get(watcherId);
+    if (!loop) {
+      loop = { ...this.createLoop(watcherId, 0), manualOnce: true };
+      this.loops.set(watcherId, loop);
+      this.startRun(loop, true);
+      return { accepted: true };
+    }
+    if (loop.inFlight || loop.queuedForRun) {
+      return { accepted: false, reason: 'already-running' };
+    }
+    if (loop.state === 'paused' || loop.state === 'captcha') {
+      loop.restoreStateAfterManual = loop.state;
+    }
     this.clearTimer(loop);
-    this.startRun(loop);
+    this.startRun(loop, true);
+    return { accepted: true };
   }
 
   // Local pause only — the server-side queue is untouched.
@@ -153,6 +173,7 @@ export class WatcherScheduler {
       backoffAttempt: 0,
       inFlight: false,
       queuedForRun: false,
+      forceNextRun: false,
     };
   }
 
@@ -175,9 +196,10 @@ export class WatcherScheduler {
     this.emit(loop);
   }
 
-  private startRun(loop: LoopRecord): void {
+  private startRun(loop: LoopRecord, force = false): void {
     if (this.authExpired || loop.inFlight) return;
     if (this.runningCount >= this.maxConcurrent) {
+      loop.forceNextRun ||= force;
       if (!loop.queuedForRun) {
         loop.queuedForRun = true;
         this.runQueue.push(loop.watcherId);
@@ -185,13 +207,15 @@ export class WatcherScheduler {
       return;
     }
     loop.queuedForRun = false;
+    force ||= loop.forceNextRun;
+    loop.forceNextRun = false;
     loop.inFlight = true;
     this.runningCount += 1;
     loop.state = 'checking';
     loop.nextRunAt = undefined;
     this.emit(loop);
 
-    this.deps.checkNow(loop.watcherId).then(
+    this.deps.checkNow(loop.watcherId, force).then(
       (outcome) => this.finishRun(loop, outcome),
       (error: unknown) =>
         this.finishRun(loop, {
@@ -222,6 +246,30 @@ export class WatcherScheduler {
       return;
     }
     if (loop.state === 'paused' || loop.state === 'offline') {
+      this.emit(loop);
+      this.drainQueue();
+      return;
+    }
+
+    if (loop.manualOnce) {
+      // One-off check without a persistent loop: settle to a resting state
+      // with no timer so nothing is scheduled for an inactive watcher.
+      loop.manualOnce = undefined;
+      loop.state =
+        outcome.status === 'ok' ? 'idle' : outcome.status === 'captcha' ? 'captcha' : 'error';
+      loop.nextRunAt = undefined;
+      this.emit(loop);
+      this.drainQueue();
+      return;
+    }
+
+    if (loop.restoreStateAfterManual !== undefined) {
+      // One-off check on a paused/captcha loop: restore the resting state
+      // instead of resuming the schedule. A fresh CAPTCHA outcome wins.
+      const restore = loop.restoreStateAfterManual;
+      loop.restoreStateAfterManual = undefined;
+      loop.state = outcome.status === 'captcha' ? 'captcha' : restore;
+      loop.nextRunAt = undefined;
       this.emit(loop);
       this.drainQueue();
       return;
@@ -289,7 +337,10 @@ export class WatcherScheduler {
     const index = this.runQueue.indexOf(watcherId);
     if (index >= 0) this.runQueue.splice(index, 1);
     const loop = this.loops.get(watcherId);
-    if (loop) loop.queuedForRun = false;
+    if (loop) {
+      loop.queuedForRun = false;
+      loop.forceNextRun = false;
+    }
   }
 
   private jitter(baseMs: number): number {

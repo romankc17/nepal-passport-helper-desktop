@@ -15,14 +15,14 @@ function deferred<T>() {
 interface Harness {
   scheduler: WatcherScheduler;
   events: SchedulerEvent[];
-  checkNow: ReturnType<typeof vi.fn<(watcherId: number) => Promise<CheckOutcome>>>;
+  checkNow: ReturnType<typeof vi.fn<(watcherId: number, force: boolean) => Promise<CheckOutcome>>>;
   scheduledDelays: number[];
 }
 
 function makeHarness(outcome: CheckOutcome = { status: 'ok' }): Harness {
   const events: SchedulerEvent[] = [];
   const scheduledDelays: number[] = [];
-  const checkNow = vi.fn<(watcherId: number) => Promise<CheckOutcome>>().mockResolvedValue(outcome);
+  const checkNow = vi.fn<(watcherId: number, force: boolean) => Promise<CheckOutcome>>().mockResolvedValue(outcome);
   const scheduler = new WatcherScheduler({
     checkNow,
     onEvent: (event) => events.push(event),
@@ -56,6 +56,7 @@ describe('WatcherScheduler', () => {
 
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.checkNow).toHaveBeenCalledTimes(1);
+    expect(harness.checkNow).toHaveBeenLastCalledWith(1, false);
     expect(stateOf(harness, 1)?.state).toBe('scheduled');
 
     await vi.advanceTimersByTimeAsync(60_000);
@@ -96,15 +97,103 @@ describe('WatcherScheduler', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.checkNow).toHaveBeenCalledTimes(1);
 
-    harness.scheduler.checkNow(1);
+    const result = harness.scheduler.checkNow(1);
+    expect(result).toEqual({ accepted: true });
     await vi.advanceTimersByTimeAsync(0);
     expect(harness.checkNow).toHaveBeenCalledTimes(2);
+    expect(harness.checkNow).toHaveBeenLastCalledWith(1, true);
 
     // The regular loop continues from the manual run, exactly one timer.
     await vi.advanceTimersByTimeAsync(60_000);
     expect(harness.checkNow).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(harness.checkNow).toHaveBeenCalledTimes(4);
+  });
+
+  it('checkNow runs a one-off check for a watcher without a loop', async () => {
+    const harness = makeHarness();
+    // Inactive watchers get no loop from the sync.
+    harness.scheduler.syncFromServer([{ id: 9, intervalSeconds: 60, active: false }]);
+    expect(harness.scheduler.getRuntime()).toHaveLength(0);
+
+    const result = harness.scheduler.checkNow(9);
+    expect(result).toEqual({ accepted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.checkNow).toHaveBeenCalledTimes(1);
+
+    // Settles to a resting state and never schedules a follow-up run.
+    expect(stateOf(harness, 9)?.state).toBe('idle');
+    expect(harness.scheduledDelays.filter((delay) => delay > 0)).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(harness.checkNow).toHaveBeenCalledTimes(1);
+  });
+
+  it('checkNow on a paused watcher runs once and restores the paused state', async () => {
+    const harness = makeHarness();
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+    harness.scheduler.pause(1);
+    expect(stateOf(harness, 1)?.state).toBe('paused');
+
+    const result = harness.scheduler.checkNow(1);
+    expect(result).toEqual({ accepted: true });
+    expect(stateOf(harness, 1)?.state).toBe('checking');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+
+    // Back to paused — the manual click must not resume the schedule.
+    expect(stateOf(harness, 1)?.state).toBe('paused');
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('checkNow on a captcha watcher runs once and keeps the captcha state', async () => {
+    const harness = makeHarness({ status: 'captcha' });
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stateOf(harness, 1)?.state).toBe('captcha');
+
+    const result = harness.scheduler.checkNow(1);
+    expect(result).toEqual({ accepted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+    expect(stateOf(harness, 1)?.state).toBe('captcha');
+
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+  });
+
+  it('checkNow rejects a second click while a check is in flight', async () => {
+    const harness = makeHarness();
+    const gate = deferred<CheckOutcome>();
+    harness.checkNow.mockReturnValueOnce(gate.promise);
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.checkNow).toHaveBeenCalledTimes(1);
+
+    expect(harness.scheduler.checkNow(1)).toEqual({
+      accepted: false,
+      reason: 'already-running',
+    });
+    gate.resolve({ status: 'ok' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stateOf(harness, 1)?.state).toBe('scheduled');
+  });
+
+  it('checkNow rejects every watcher once auth has expired', async () => {
+    const harness = makeHarness({ status: 'auth-expired' });
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stateOf(harness, 1)?.state).toBe('auth-expired');
+
+    expect(harness.scheduler.checkNow(1)).toEqual({
+      accepted: false,
+      reason: 'auth-expired',
+    });
+    expect(harness.scheduler.checkNow(99)).toEqual({
+      accepted: false,
+      reason: 'auth-expired',
+    });
   });
 
   it('ignores checkNow while a check is in flight', async () => {

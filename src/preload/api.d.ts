@@ -7,10 +7,30 @@ import type {
   AppointmentListQuery,
   BookNowInput,
   BookNowResult,
+  CheckNowRejection,
   ClientDetail,
   ClientListQuery,
+  ClientListResult,
   ClientSummary,
+  ImportConfirmResult,
+  ImportPreviewResult,
+  OfficialApplicationSummary,
+  OfficialImportStateEvent,
+  LabBookInput,
+  LabBookResult,
+  LabClient,
+  LabClientDetail,
+  LabJob,
+  LabGenerateInput,
+  LabGenerateResult,
+  LabHistoryItem,
+  LabListQuery,
+  LabReconcileResult,
+  LabSubmitInput,
+  LabSubmitResult,
+  LabSummary,
   LocationItem,
+  LocationKind,
   MeResult,
   Overview,
   Paged,
@@ -24,6 +44,7 @@ import type {
   ReceiptResult,
   ReconcileResult,
   SessionInfo,
+  UpdateStatus,
   Watcher,
   WatcherCheckResult,
   WatcherCreateInput,
@@ -44,7 +65,9 @@ export type EventChannel =
   | 'net-status'
   | 'notification-click'
   | 'play-sound'
-  | 'auth-expired';
+  | 'auth-expired'
+  | 'update-status'
+  | 'official-import-state';
 
 export interface DesktopApi {
   auth: {
@@ -56,15 +79,24 @@ export interface DesktopApi {
     get(): Promise<Overview>;
   };
   locations: {
-    list(query: {
-      kind: 'provinces' | 'districts' | 'providers';
-      parent?: number | string;
-    }): Promise<LocationItem[]>;
+    list(query: { kind: LocationKind; parent?: number | string }): Promise<LocationItem[]>;
   };
   clients: {
-    list(query?: ClientListQuery): Promise<Paged<ClientSummary>>;
+    list(query?: ClientListQuery): Promise<ClientListResult>;
     get(id: number): Promise<ClientDetail>;
     readyByLocation(): Promise<ReadyByLocationGroup[]>;
+    importPreview(input: { application: Record<string, unknown> }): Promise<ImportPreviewResult>;
+    importConfirm(input: {
+      fields: Record<string, unknown>;
+      allow_duplicate?: boolean;
+      idempotency_key: string;
+    }): Promise<ImportConfirmResult>;
+  };
+  officialImport: {
+    open(): Promise<{ opened: true }>;
+    list(): Promise<OfficialApplicationSummary[]>;
+    get(applicationId: string): Promise<Record<string, unknown>>;
+    close(): Promise<{ closed: true }>;
   };
   queue: {
     add(input: QueueAddInput): Promise<QueueAddResult>;
@@ -105,7 +137,9 @@ export interface DesktopApi {
     update(patch: PreferencesPatch): Promise<Preferences>;
   };
   scheduler: {
-    checkNow(watcherId: number): Promise<{ requested: true }>;
+    checkNow(
+      watcherId: number,
+    ): Promise<{ requested: boolean; reason: CheckNowRejection | null }>;
     pause(watcherId: number): Promise<{ paused: true }>;
     resume(watcherId: number): Promise<{ resumed: true }>;
     getRuntime(): Promise<WatcherRuntime[]>;
@@ -122,10 +156,34 @@ export interface DesktopApi {
   app: {
     version(): Promise<string>;
   };
+  updater: {
+    check(): Promise<{ requested: true }>;
+    status(): Promise<UpdateStatus>;
+    install(): Promise<{ requested: true }>;
+  };
+  lab: {
+    summary(): Promise<LabSummary>;
+    clients(query?: LabListQuery): Promise<Paged<LabClient> & { is_staff: boolean }>;
+    detail(id: number): Promise<LabClientDetail>;
+    generate(input: LabGenerateInput): Promise<LabGenerateResult>;
+    submit(input: LabSubmitInput): Promise<{ batch_id: string }>;
+    book(input: LabBookInput): Promise<{ batch_id: string }>;
+    job(batchId: string): Promise<LabJob>;
+    reconcile(input?: { client_ids?: number[] }): Promise<LabReconcileResult>;
+    history(query?: LabListQuery): Promise<Paged<LabHistoryItem>>;
+    cancel(bookingId: number): Promise<{ cancelled: true; application_id: string }>;
+    receipt(bookingId: number): Promise<ReceiptResult>;
+    delete(id: number): Promise<{ deleted: true }>;
+  };
   on(channel: 'watcher-state', callback: (payload: WatcherStateEvent) => void): () => void;
   on(channel: 'net-status', callback: (payload: { online: boolean }) => void): () => void;
   on(channel: 'notification-click', callback: (payload: { route: string }) => void): () => void;
   on(channel: 'play-sound' | 'auth-expired', callback: (payload: undefined) => void): () => void;
+  on(channel: 'update-status', callback: (payload: UpdateStatus) => void): () => void;
+  on(
+    channel: 'official-import-state',
+    callback: (payload: OfficialImportStateEvent) => void,
+  ): () => void;
   on(channel: EventChannel, callback: (payload: unknown) => void): () => void;
 }
 

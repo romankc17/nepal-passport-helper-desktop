@@ -1,6 +1,7 @@
 import {
   Activity,
   CalendarCheck,
+  FlaskConical,
   LayoutDashboard,
   ListOrdered,
   Radar,
@@ -15,6 +16,7 @@ const navItems = [
   { to: '/watchers', label: 'Slot Watchers', icon: Radar },
   { to: '/queue', label: 'Booking Queue', icon: ListOrdered },
   { to: '/clients', label: 'Clients', icon: Users },
+  { to: '/booking-lab', label: 'Booking Lab', icon: FlaskConical },
   { to: '/appointments', label: 'Appointments', icon: CalendarCheck },
   { to: '/activity', label: 'Activity', icon: Activity },
   { to: '/settings', label: 'Settings', icon: Settings },

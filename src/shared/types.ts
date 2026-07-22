@@ -74,7 +74,11 @@ export interface SessionInfo {
 
 // Locations
 
-export type LocationKind = 'provinces' | 'districts' | 'providers';
+export type LocationKind = 'countries' | 'provinces' | 'districts' | 'providers';
+
+// Official ams_countries: 222 = Nepal, 307 = "Other" (foreign missions group).
+export const COUNTRY_NEPAL_ID = '222';
+export const COUNTRY_OTHER_ID = '307';
 
 export interface LocationItem {
   // Province/district ids arrive as strings ("225"), provider ids as numbers.
@@ -115,6 +119,11 @@ export interface ClientSummary {
   queued_booking_id: number | null;
   appointment: AppointmentRef | null;
   created_by: string;
+  created_at: string;
+  country_id?: number | string;
+  country_name?: string;
+  appointment_country_id?: number | string;
+  appointment_country_name?: string;
 }
 
 export interface DocumentRequirement {
@@ -136,6 +145,10 @@ export interface Paged<T> {
   total: number;
 }
 
+export interface ClientListResult extends Paged<ClientSummary> {
+  providers: { id: number; name: string }[];
+}
+
 export interface ClientListQuery {
   page?: number;
   page_size?: number;
@@ -151,7 +164,56 @@ export interface ReadyByLocationGroup {
   provider_id: number;
   provider_name: string;
   district_name: string;
+  country_id?: number | string;
+  country_name?: string;
   clients: ClientSummary[];
+}
+
+// Import from official portal
+
+// Sanitized summary of an application listed on the official portal account.
+export interface OfficialApplicationSummary {
+  id: string;
+  applicant_name: string;
+  application_type: string;
+  submitted_at: string;
+  status: string;
+}
+
+export interface ImportWarning {
+  field: string;
+  source_value: string;
+  reason: string;
+}
+
+export interface ImportDuplicate {
+  client_id: number;
+  full_name: string;
+}
+
+// Mapped client fields are plain string/string-or-number key-values matching
+// the ApplicantForm field names on the Django side.
+export interface ImportPreviewResult {
+  fields: Record<string, string>;
+  warnings: ImportWarning[];
+  unmapped: Record<string, string>;
+  requirements: DocumentRequirement[];
+  duplicate: ImportDuplicate | null;
+}
+
+export interface ImportConfirmResult {
+  client: ClientSummary;
+  edit_url: string;
+}
+
+// Broadcast from main when the official-login window opens/closes, and when a
+// navigation to a non-official origin is blocked (a silent block would look
+// like a hang if the portal legitimately redirects after login).
+export interface OfficialImportStateEvent {
+  type: 'official-import-state';
+  state: 'opened' | 'closed' | 'blocked-navigation';
+  /** Present for 'blocked-navigation' — the host that was blocked. */
+  host?: string;
 }
 
 // Queue & booking
@@ -163,6 +225,9 @@ export interface QueueAddInput {
   provider_name: string;
   client_ids: number[];
   idempotency_key: string;
+  // Foreign missions: country 307 with district_id/province_id sent as ''.
+  country_id?: number | string;
+  country_name?: string;
 }
 
 export interface QueueAddResult {
@@ -218,10 +283,13 @@ export interface Watcher {
   provider_id: number | string;
   provider_name: string;
   district_name: string;
+  country_id?: number | string;
+  country_name?: string;
   interval_seconds: number;
   days_ahead: number;
   desired_bookings: number;
   notify: boolean;
+  notification_email: string;
   active: boolean;
   last_checked_at: string | null;
   next_check_due_at: string | null;
@@ -230,6 +298,7 @@ export interface Watcher {
   queued_count: number;
   booked_count: number;
   created_at: string;
+  priority_bookings?: PriorityBooking[];
 }
 
 export interface WatcherCreateInput {
@@ -237,11 +306,14 @@ export interface WatcherCreateInput {
   district_id: number | string;
   province_id: number | string;
   provider_name: string;
+  country_id?: number | string;
+  country_name?: string;
   mode: WatcherMode;
   interval_seconds?: number;
   days_ahead?: number;
   desired_bookings?: number;
   notify?: boolean;
+  notification_email?: string;
 }
 
 export interface WatcherSettingsPatch {
@@ -249,6 +321,7 @@ export interface WatcherSettingsPatch {
   days_ahead?: number;
   notify?: boolean;
   desired_bookings?: number;
+  notification_email?: string;
 }
 
 export interface WatcherCheckResult {
@@ -257,6 +330,39 @@ export interface WatcherCheckResult {
   slots_found: number;
   booked: unknown[];
   errors: { code?: string; message?: string }[];
+}
+
+export interface LocalRunStart {
+  checked: boolean;
+  watcher?: Watcher;
+  run_id?: string;
+  service_id?: number;
+  provider_id?: number | string;
+  start_date?: string;
+  days_ahead?: number;
+  mode?: WatcherMode;
+}
+
+export interface LocalBookingJob {
+  booking_id: number;
+  client_id: number;
+  application_id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  application_payload: Record<string, unknown>;
+  booking_payload: Record<string, unknown>;
+}
+
+export interface LocalBookingResult {
+  booking_id: number;
+  application_id: string;
+  booked: boolean;
+  date: string;
+  start_time: string;
+  receipt?: string;
+  response?: Record<string, unknown>;
+  error?: string;
 }
 
 export interface WatcherMatchingClient {
@@ -323,6 +429,8 @@ export interface Appointment {
   cancelled_at: string | null;
   booked_by_system: boolean;
   receipt_available: boolean;
+  country_id?: number | string;
+  country_name?: string;
 }
 
 export interface AppointmentListQuery {
@@ -371,11 +479,20 @@ export interface ActivityQuery {
 
 // Preferences
 
+export interface FavoriteLocation {
+  provider_id: number | string;
+  provider_name: string;
+  district_id: number | string;
+  province_id: number | string;
+  district_name?: string;
+}
+
 export interface Preferences {
   notifications_enabled: boolean;
   sound_enabled: boolean;
   email_on_booking: boolean;
   email_address: string;
+  favorite_locations: FavoriteLocation[];
 }
 
 export type PreferencesPatch = Partial<Preferences>;
@@ -441,10 +558,93 @@ export interface WatcherRuntime {
   lastResult?: CheckOutcome;
 }
 
+// Why a manual "check now" click was rejected — surfaced to the user instead
+// of silently ignoring the click.
+export type CheckNowRejection = 'auth-expired' | 'already-running';
+
+export interface CheckNowResult {
+  accepted: boolean;
+  reason?: CheckNowRejection;
+}
+
 export interface WatcherSyncItem {
   id: number;
   intervalSeconds: number;
   active: boolean;
+}
+
+// Local session booking queue (in-memory in the main process, never persisted
+// to disk or the backend DB — gone when the app closes).
+
+export interface LocalQueueLocation {
+  provider_id: number | string;
+  provider_name: string;
+  district_id: number | string;
+  province_id: number | string;
+  country_id?: number | string;
+  country_name?: string;
+}
+
+export type LocalQueueItemStatus = 'queued' | 'submitting' | 'booking' | 'booked' | 'failed';
+
+export interface LocalQueueItem {
+  client_id: number;
+  client_name: string;
+  official_application_id: string;
+  phone: string;
+  email: string;
+  location: LocalQueueLocation;
+  added_at: number;
+  status: LocalQueueItemStatus;
+  /** True when the failure is permanent (e.g. client not ready) — excluded from auto-retry. */
+  permanent?: boolean;
+  error?: string;
+  appointment?: { date: string; start_time: string };
+}
+
+export type LocalQueueEngineState =
+  | 'idle'
+  | 'scheduled'
+  | 'checking'
+  | 'backoff'
+  | 'paused'
+  | 'offline'
+  | 'captcha'
+  | 'error';
+
+export interface LocalQueueGroupEngine {
+  state: LocalQueueEngineState;
+  next_run_at?: number;
+  interval_seconds: number;
+  last_checked_at?: number;
+  last_slots_found?: number;
+  last_error?: string;
+}
+
+export interface LocalQueueGroup {
+  key: string;
+  location: LocalQueueLocation;
+  items: LocalQueueItem[];
+  engine: LocalQueueGroupEngine;
+}
+
+export interface LocalQueueSnapshot {
+  groups: LocalQueueGroup[];
+  total: number;
+}
+
+export interface LocalQueueAddInput extends LocalQueueLocation {
+  client_ids: number[];
+}
+
+export interface LocalQueueAddResult {
+  queued: { client_id: number }[];
+  skipped: { client_id: number; reason: string }[];
+}
+
+export interface LocalQueueStateEvent {
+  type: 'local-queue-state';
+  snapshot: LocalQueueSnapshot;
 }
 
 // Local settings (main-process only, never sent to the server)
@@ -461,3 +661,145 @@ export interface AppSettings {
 }
 
 export type AppSettingsPatch = Partial<AppSettings>;
+
+// Auto-update status broadcast from main to renderer.
+
+export type UpdateStatus =
+  | { type: 'idle' }
+  | { type: 'checking' }
+  | { type: 'available'; version: string; releaseNotes?: string | null }
+  | { type: 'downloading'; percent: number; bytesPerSecond: number; transferred: number; total: number }
+  | { type: 'downloaded'; version: string }
+  | { type: 'up-to-date'; version: string }
+  | { type: 'error'; message: string };
+
+// Booking Lab
+
+export type LabClientStatus =
+  | 'draft'
+  | 'submitted'
+  | 'queued'
+  | 'booked'
+  | 'failed'
+  | 'cancelled';
+
+export interface LabClient {
+  id: number;
+  name: string;
+  application_type: string;
+  status: LabClientStatus;
+  owner: string;
+  owner_id: number;
+  official_application_id: string;
+  provider_id: number;
+  provider_name: string;
+  district_name: string;
+  booking_id: number | null;
+  booking_status: string | null;
+  appointment_date: string | null;
+  start_time: string | null;
+  can_book: boolean;
+  can_cancel: boolean;
+  can_delete: boolean;
+  receipt_available: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LabClientDetail extends LabClient {
+  history: LabHistoryItem[];
+  data: Record<string, unknown>;
+}
+
+export interface LabHistoryItem {
+  id: number;
+  client_id: number;
+  client_name: string;
+  owner: string;
+  status: string;
+  monitor_name: string;
+  appointment_date: string | null;
+  start_time: string | null;
+  error: string | null;
+  created_at: string;
+  booked_at: string | null;
+  cancelled_at: string | null;
+}
+
+export interface LabSummary {
+  generated: number;
+  submitted: number;
+  queued: number;
+  booked: number;
+  failed: number;
+  cancelled: number;
+  watchers: number;
+}
+
+export interface LabListQuery {
+  status?: string;
+  q?: string;
+  owner?: string;
+  provider_id?: number;
+  page?: number;
+  page_size?: number;
+}
+
+export interface LabGenerateInput {
+  province_id: number | string;
+  district_id: number | string;
+  provider_id: number;
+  application_type: string;
+  count: number;
+  idempotency_key: string;
+}
+
+export interface LabGenerateResult {
+  clients: Record<string, unknown>[];
+  count: number;
+}
+
+export interface LabSubmitInput {
+  clients: Record<string, unknown>[];
+  idempotency_key: string;
+}
+
+export interface LabSubmitResult {
+  submitted: { client_id: number; applicant_id: number; name: string; official_application_id: string }[];
+  failed: { client_id: number; name: string; error: string }[];
+}
+
+export interface LabBookInput {
+  client_ids: number[];
+  idempotency_key: string;
+}
+
+export interface LabBookResult {
+  results: {
+    provider: string;
+    slots_found: number;
+    booked: number;
+    queued: number;
+    error: string | null;
+  }[];
+}
+
+export interface LabJob {
+  batch_id: string;
+  kind: 'submit' | 'book';
+  total: number;
+  completed: number;
+  failed: number;
+  finished: boolean;
+  stages: Record<number, 'pending' | 'submitting' | 'booking' | 'done' | 'failed'>;
+  result: LabSubmitResult | LabBookResult | null;
+  error: string | null;
+}
+
+export interface LabReconcileInput {
+  client_ids?: number[];
+}
+
+export interface LabReconcileResult {
+  healed: { client_id: number; booking_id: number; date: string; start_time: string }[];
+}

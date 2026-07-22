@@ -49,6 +49,8 @@ interface MockWatcher {
   provider_id: number;
   provider_name: string;
   district_name: string;
+  country_id: string | number;
+  country_name: string;
   interval_seconds: number;
   days_ahead: number;
   desired_bookings: number;
@@ -92,6 +94,12 @@ export class MockServer {
   private requestCounter = 0;
   private nextBookingId = 500;
   private nextWatcherId = 90;
+  private nextClientId = 200;
+  // How many times the import preview endpoint was hit — lets the e2e spec
+  // prove the sanitized payload actually reached the (mock) backend.
+  importPreviewCalls = 0;
+  // Every request the app makes, in order — lets e2e assert refetch behavior.
+  readonly requestLog: { method: string; path: string }[] = [];
   private readonly bookings: MockBooking[] = [];
   private readonly watchers: MockWatcher[] = [];
   private readonly clients: MockClient[] = [];
@@ -104,6 +112,7 @@ export class MockServer {
     sound_enabled: true,
     email_on_booking: false,
     email_address: '',
+    favorite_locations: [] as Record<string, unknown>[],
   };
 
   constructor() {
@@ -147,6 +156,8 @@ export class MockServer {
       provider_id: 501,
       provider_name: 'Rupandehi',
       district_name: 'Rupandehi/रुपन्देही',
+      country_id: '222',
+      country_name: 'Nepal',
       interval_seconds: 3600,
       days_ahead: 7,
       desired_bookings: 5,
@@ -204,6 +215,7 @@ export class MockServer {
   private async handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const path = url.pathname;
+    this.requestLog.push({ method: req.method ?? 'GET', path });
     const body = await readBody(req);
 
     // Control endpoint — not part of the contract.
@@ -316,6 +328,14 @@ export class MockServer {
     if (route === '/locations/' && method === 'GET') {
       const kind = url.searchParams.get('kind');
       const parent = url.searchParams.get('parent');
+      if (kind === 'countries') {
+        return this.ok(res, {
+          items: [
+            { id: '222', name: 'Nepal' },
+            { id: '307', name: 'Other' },
+          ],
+        });
+      }
       if (kind === 'provinces') {
         return this.ok(res, {
           items: [
@@ -335,6 +355,16 @@ export class MockServer {
       }
       if (kind === 'providers' && parent === '280') {
         return this.ok(res, { items: [{ id: 501, name: 'Rupandehi' }] });
+      }
+      // Foreign missions: country 307 lists them directly as providers.
+      if (kind === 'providers' && parent === '307') {
+        return this.ok(res, {
+          items: [
+            { id: 556, name: 'NE, Doha' },
+            { id: 558, name: 'NCG, Hong Kong' },
+            { id: 560, name: 'NE, Riyadh' },
+          ],
+        });
       }
       return this.fail(res, 400, 'VALIDATION_ERROR', 'Choose a valid location lookup.', false);
     }
@@ -370,6 +400,14 @@ export class MockServer {
       return this.ok(res, { client: { ...client, active_booking: active ?? null } });
     }
 
+    if (route === '/clients/import-official/preview/' && method === 'POST') {
+      return this.importOfficialPreview(json, res);
+    }
+
+    if (route === '/clients/import-official/confirm/' && method === 'POST') {
+      return this.importOfficialConfirm(json, res);
+    }
+
     if (route === '/clients/ready-by-location/' && method === 'GET') {
       const ready = this.clients.filter(
         (client) => client.can_book && client.missing_document_count === 0,
@@ -385,6 +423,8 @@ export class MockServer {
           provider_id: providerId,
           provider_name: clients[0].provider_name,
           district_name: clients[0].district_name,
+          country_id: '222',
+          country_name: 'Nepal',
           clients: clients.map(({ document_requirements: _docs, ...summary }) => summary),
         })),
       });
@@ -484,26 +524,7 @@ export class MockServer {
     }
 
     if (route === '/watchers/' && method === 'POST') {
-      const watcher: MockWatcher = {
-        id: this.nextWatcherId++,
-        name: String(json.provider_name ?? 'Watcher'),
-        mode: (json.mode as 'notify' | 'book') ?? 'book',
-        province_id: json.province_id as string,
-        district_id: json.district_id as string,
-        provider_id: Number(json.provider_id),
-        provider_name: String(json.provider_name ?? ''),
-        district_name: '',
-        interval_seconds: Number(json.interval_seconds ?? 3600),
-        days_ahead: Number(json.days_ahead ?? 7),
-        desired_bookings: Number(json.desired_bookings ?? 5),
-        notify: Boolean(json.notify ?? true),
-        active: true,
-        last_checked_at: null,
-        next_check_due_at: null,
-        last_error: '',
-        available_slots: [],
-        created_at: new Date().toISOString(),
-      };
+      const watcher = this.buildWatcher(json, (json.mode as 'notify' | 'book') ?? 'book');
       this.watchers.push(watcher);
       return this.ok(res, { watcher: this.watcherJson(watcher) });
     }
@@ -661,6 +682,130 @@ export class MockServer {
     this.fail(res, 404, 'NOT_FOUND', `Mock has no route for ${method} ${route}`, false);
   }
 
+  // Light mock of the real _map_official_application contract (the full
+  // mapping is covered by Django unit tests): reject auth/session material,
+  // map a small fixed set of camelCase official fields to snake_case.
+  private importOfficialPreview(
+    json: Record<string, unknown>,
+    res: http.ServerResponse,
+  ): void {
+    this.importPreviewCalls++;
+    const application = json.application;
+    if (!application || typeof application !== 'object' || Array.isArray(application)) {
+      return this.fail(res, 400, 'VALIDATION_ERROR', 'Provide the official application object.', false);
+    }
+    if (containsBlockedKey(application)) {
+      return this.fail(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'The payload contains authentication or session material; remove it and retry.',
+        false,
+      );
+    }
+    const flat = flattenScalars(application as Record<string, unknown>);
+    const text = (...keys: string[]): string => {
+      for (const key of keys) {
+        const value = flat.get(key);
+        if (value !== undefined) return String(value).trim();
+      }
+      return '';
+    };
+    const fields: Record<string, string> = {};
+    const simple: [string, string[]][] = [
+      ['given_name', ['givenname', 'firstname']],
+      ['surname', ['surname', 'lastname']],
+      ['date_of_birth', ['dateofbirth', 'dob']],
+      ['citizenship_number', ['citizenshipnumber']],
+      ['national_id_number', ['nationalidnumber', 'nid']],
+      ['phone', ['phone', 'mobilenumber', 'mobile']],
+      ['email', ['email', 'emailaddress']],
+    ];
+    for (const [target, sources] of simple) {
+      const value = text(...sources);
+      if (value) fields[target] = value;
+    }
+    const gender = text('gender').toUpperCase();
+    if (gender) {
+      fields.gender = ({ M: 'M', MALE: 'M', F: 'F', FEMALE: 'F' } as Record<string, string>)[gender] ?? 'X';
+    }
+    const applicationType = text('applicationtype', 'type').toUpperCase();
+    if (Object.keys(APPLICATION_TYPE_LABELS).includes(applicationType)) {
+      fields.application_type = applicationType;
+    }
+    return this.ok(res, {
+      fields,
+      warnings: [],
+      unmapped: {},
+      requirements: [
+        { type: 'citizenship', label: 'Citizenship', required: true, present: false },
+      ],
+      duplicate: null,
+    });
+  }
+
+  private importOfficialConfirm(
+    json: Record<string, unknown>,
+    res: http.ServerResponse,
+  ): void {
+    const fields = json.fields;
+    if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+      return this.fail(res, 400, 'VALIDATION_ERROR', 'Provide the reviewed fields object.', false);
+    }
+    if (containsBlockedKey(fields)) {
+      return this.fail(
+        res,
+        400,
+        'VALIDATION_ERROR',
+        'The payload contains authentication or session material; remove it and retry.',
+        false,
+      );
+    }
+    const key = String(json.idempotency_key ?? '');
+    const cached = this.idempotentResponses.get(`import-confirm:${key}`);
+    if (cached) return this.ok(res, cached);
+    const input = fields as Record<string, unknown>;
+    const id = this.nextClientId++;
+    const fullName =
+      [input.given_name, input.surname]
+        .map((part) => String(part ?? '').trim())
+        .filter(Boolean)
+        .join(' ') || 'Imported client';
+    const client: MockClient = {
+      id,
+      full_name: fullName,
+      application_type:
+        APPLICATION_TYPE_LABELS[String(input.application_type ?? 'NEW').toUpperCase()] ??
+        'First issuance (new)',
+      status: 'fresh',
+      desktop_status: 'incomplete',
+      can_book: false,
+      official_application_id: '',
+      provider_id: 501,
+      provider_name: 'Rupandehi',
+      district_name: 'Rupandehi/रुपन्देही',
+      phone: String(input.phone ?? ''),
+      email: String(input.email ?? ''),
+      missing_document_count: 1,
+      queued_booking_id: null,
+      appointment: null,
+      created_by: 'admin',
+      document_requirements: [
+        { type: 'citizenship', label: 'Citizenship', required: true, present: false },
+        { type: 'nationalEID', label: 'National eID', required: false, present: true },
+      ],
+    };
+    this.clients.push(client);
+    this.addActivity('import', 'success', `Imported ${fullName} as a new Fresh client`, {
+      client_id: id,
+      client_name: fullName,
+    });
+    const { document_requirements: _docs, ...summary } = client;
+    const payload = { client: summary, edit_url: `/clients/${id}/edit/` };
+    if (key) this.idempotentResponses.set(`import-confirm:${key}`, payload);
+    return this.ok(res, payload);
+  }
+
   private runCheck(watcher: MockWatcher, res: http.ServerResponse): void {
     if (this.scenario === 'captcha_421') {
       return this.fail(
@@ -755,30 +900,43 @@ export class MockServer {
     return { client_id: clientId, booking_id: booking.id, outcome: 'queued', error: NO_SLOT_MESSAGE };
   }
 
+  // Server-side normalization: foreign missions (country != 222) have no
+  // province/district; their location is the country itself (307).
+  private buildWatcher(
+    json: Record<string, unknown>,
+    mode: 'notify' | 'book',
+  ): MockWatcher {
+    const countryId = String(json.country_id ?? '222');
+    const foreign = countryId !== '222';
+    return {
+      id: this.nextWatcherId++,
+      name: String(json.provider_name ?? 'Watcher'),
+      mode,
+      province_id: foreign ? '' : (json.province_id as string),
+      district_id: foreign ? '307' : (json.district_id as string),
+      provider_id: Number(json.provider_id),
+      provider_name: String(json.provider_name ?? ''),
+      district_name: '',
+      country_id: countryId,
+      country_name: String(json.country_name ?? (foreign ? 'Other' : 'Nepal')),
+      interval_seconds: Number(json.interval_seconds ?? 3600),
+      days_ahead: Number(json.days_ahead ?? 7),
+      desired_bookings: Number(json.desired_bookings ?? 5),
+      notify: Boolean(json.notify ?? true),
+      active: true,
+      last_checked_at: null,
+      next_check_due_at: null,
+      last_error: '',
+      available_slots: [],
+      created_at: new Date().toISOString(),
+    };
+  }
+
   private ensureWatcher(json: Record<string, unknown>): MockWatcher {
     const providerId = Number(json.provider_id);
     let watcher = this.watchers.find((entry) => entry.provider_id === providerId);
     if (!watcher) {
-      watcher = {
-        id: this.nextWatcherId++,
-        name: String(json.provider_name ?? 'Watcher'),
-        mode: 'book',
-        province_id: json.province_id as string,
-        district_id: json.district_id as string,
-        provider_id: providerId,
-        provider_name: String(json.provider_name ?? ''),
-        district_name: '',
-        interval_seconds: 3600,
-        days_ahead: 7,
-        desired_bookings: 5,
-        notify: true,
-        active: true,
-        last_checked_at: null,
-        next_check_due_at: null,
-        last_error: '',
-        available_slots: [],
-        created_at: new Date().toISOString(),
-      };
+      watcher = this.buildWatcher(json, 'book');
       this.watchers.push(watcher);
     }
     return watcher;
@@ -866,6 +1024,50 @@ export class MockServer {
       }),
     );
   }
+}
+
+const APPLICATION_TYPE_LABELS: Record<string, string> = {
+  NEW: 'First issuance (new)',
+  RENEW: 'Passport renewal',
+  REPLACE_LOST: 'Replacement (lost/stolen)',
+  REPLACE_DAMAGED: 'Replacement (damaged)',
+  MODIFICATION: 'Modification',
+};
+
+// Mirrors the backend's _BLOCKED_KEY_RE — any payload carrying these keys is
+// rejected, which is how the e2e suite proves the Electron sanitizer stripped
+// the official portal's auth/biometric material before it crossed IPC.
+const BLOCKED_KEY_PATTERN =
+  /token|jwt|authorization|cookie|password|captcha|secret|credential|session/i;
+
+function containsBlockedKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(containsBlockedKey);
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).some(
+      ([key, child]) => BLOCKED_KEY_PATTERN.test(key) || containsBlockedKey(child),
+    );
+  }
+  return false;
+}
+
+// BFS through nested objects, collecting the first non-empty scalar per
+// normalized (lowercase alphanumeric) key.
+function flattenScalars(root: Record<string, unknown>): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  const queue: Record<string, unknown>[] = [root];
+  while (queue.length > 0 && out.size < 200) {
+    const current = queue.shift() as Record<string, unknown>;
+    for (const [key, value] of Object.entries(current)) {
+      if (value && typeof value === 'object') {
+        if (!Array.isArray(value)) queue.push(value as Record<string, unknown>);
+        continue;
+      }
+      if (value === null || value === undefined || value === '') continue;
+      const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      if (!out.has(normalized)) out.set(normalized, value);
+    }
+  }
+  return out;
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {

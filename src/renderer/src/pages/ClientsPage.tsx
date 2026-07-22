@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Users, XCircle } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Import, Users, XCircle } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ClientSummary } from '../../../shared/types';
 import { api, queryKeys } from '../api';
@@ -9,6 +9,7 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Drawer } from '../components/Drawer';
 import { EmptyState } from '../components/EmptyState';
+import { ImportOfficialDialog } from '../components/import-official/ImportOfficialDialog';
 import { Input } from '../components/Input';
 import { PageHeader } from '../components/PageHeader';
 import { Pagination } from '../components/Pagination';
@@ -16,9 +17,10 @@ import { Select } from '../components/Select';
 import { Skeleton } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
 import { describeError } from '../lib/errors';
-import { latinName } from '../lib/format';
+import { foreignCountry, formatDateTime, latinName } from '../lib/format';
 import { useDebouncedValue } from '../lib/hooks';
 import { resolveProviderLocation } from '../lib/resolve-location';
+import { cn } from '../lib/utils';
 
 const PAGE_SIZE = 25;
 
@@ -33,6 +35,31 @@ const statusTone: Record<string, BadgeTone> = {
 
 const statusOptions = ['ready', 'incomplete', 'queued', 'booked', 'not_permitted', 'cancelled'];
 const typeOptions = ['First issuance (new)', 'Passport renewal', 'Replacement (lost/stolen)'];
+const tabs = [
+  { value: 'unbooked', label: 'Unbooked' },
+  { value: 'booked', label: 'Booked' },
+  { value: 'all', label: 'All' },
+] as const;
+
+type SortKey = 'name' | 'type' | 'office' | 'applicationId' | 'status' | 'added';
+type SortState = { key: SortKey; direction: 'asc' | 'desc' };
+
+const sortValue = (client: ClientSummary, key: SortKey): string | number => {
+  switch (key) {
+    case 'name':
+      return client.full_name;
+    case 'type':
+      return client.application_type;
+    case 'office':
+      return client.provider_name;
+    case 'applicationId':
+      return client.official_application_id;
+    case 'status':
+      return client.desktop_status;
+    case 'added':
+      return client.created_at;
+  }
+};
 
 export function ClientsPage() {
   const { toast } = useToast();
@@ -40,8 +67,13 @@ export function ClientsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
   const [queueing, setQueueing] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [sort, setSort] = useState<SortState | null>(null);
 
   const search = searchParams.get('q') ?? '';
+  const tab = tabs.some(({ value }) => value === searchParams.get('tab'))
+    ? (searchParams.get('tab') as (typeof tabs)[number]['value'])
+    : 'unbooked';
   const statusFilter = searchParams.get('status') ?? '';
   const typeFilter = searchParams.get('type') ?? '';
   const providerFilter = searchParams.get('provider') ?? '';
@@ -70,6 +102,7 @@ export function ClientsPage() {
       status: statusFilter || undefined,
       application_type: typeFilter || undefined,
       provider_id: providerFilter ? Number(providerFilter) : undefined,
+      booked: tab === 'all' ? undefined : tab === 'booked',
     }),
     queryFn: () =>
       api.clients.list({
@@ -79,16 +112,9 @@ export function ClientsPage() {
         status: statusFilter || undefined,
         application_type: typeFilter || undefined,
         provider_id: providerFilter ? Number(providerFilter) : undefined,
+        booked: tab === 'all' ? undefined : tab === 'booked',
       }),
-  });
-
-  const providersQuery = useQuery({
-    queryKey: ['providers-for-filter'],
-    queryFn: async () => {
-      const groups = await api.clients.readyByLocation();
-      return groups.map((group) => ({ id: group.provider_id, name: group.provider_name }));
-    },
-    staleTime: 60000,
+    staleTime: 30000,
   });
 
   const detailQuery = useQuery({
@@ -102,6 +128,47 @@ export function ClientsPage() {
     if (docsFilter === 'missing') return client.missing_document_count > 0;
     return true;
   });
+
+  const sortedClients = useMemo(() => {
+    if (!sort) return visibleClients;
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    return [...visibleClients].sort((a, b) => {
+      const left = sortValue(a, sort.key);
+      const right = sortValue(b, sort.key);
+      if (typeof left === 'number' && typeof right === 'number') {
+        return (left - right) * direction;
+      }
+      return String(left).localeCompare(String(right)) * direction;
+    });
+  }, [visibleClients, sort]);
+
+  const toggleSort = (key: SortKey) => {
+    setSort((current) => {
+      if (!current || current.key !== key) return { key, direction: 'asc' };
+      if (current.direction === 'asc') return { key, direction: 'desc' };
+      return null;
+    });
+  };
+
+  const renderHeader = (key: SortKey, label: string) => (
+    <button
+      type="button"
+      onClick={() => toggleSort(key)}
+      aria-label={`Sort by ${label}`}
+      className="flex items-center gap-1 font-medium hover:text-slate-600"
+    >
+      {label}
+      {sort?.key === key ? (
+        sort.direction === 'asc' ? (
+          <ArrowUp className="h-3 w-3" aria-hidden="true" />
+        ) : (
+          <ArrowDown className="h-3 w-3" aria-hidden="true" />
+        )
+      ) : (
+        <ArrowUpDown className="h-3 w-3 opacity-50" aria-hidden="true" />
+      )}
+    </button>
+  );
 
   const queueForBooking = async (client: ClientSummary) => {
     setQueueing(true);
@@ -131,12 +198,51 @@ export function ClientsPage() {
   };
 
   const detail = detailQuery.data;
+
+  const onImported = (client: ClientSummary) => {
+    void queryClient.invalidateQueries({ queryKey: ['clients'] });
+    setSelectedClientId(client.id);
+    toast(`Imported ${client.full_name} as a new Fresh client`);
+  };
   const missingRequiredDocs =
     detail?.document_requirements.filter((doc) => doc.required && !doc.present) ?? [];
 
   return (
     <div>
-      <PageHeader title="Clients" description="Applicants synced from your workspace" />
+      <PageHeader
+        title="Clients"
+        description="Applicants synced from your workspace"
+        actions={
+          <Button
+            variant="secondary"
+            data-testid="open-import-official"
+            onClick={() => setImportOpen(true)}
+          >
+            <Import className="h-4 w-4" aria-hidden="true" />
+            Import from official application
+          </Button>
+        }
+      />
+
+      <div role="tablist" aria-label="Client booking status" className="mb-4 flex gap-1">
+        {tabs.map((entry) => (
+          <button
+            key={entry.value}
+            role="tab"
+            aria-selected={tab === entry.value}
+            onClick={() => setParam('tab', entry.value === 'unbooked' ? '' : entry.value)}
+            className={cn(
+              'rounded-md px-4 py-2 text-sm font-medium transition-colors',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+              tab === entry.value
+                ? 'bg-navy text-white'
+                : 'text-slate-600 hover:bg-slate-200/60',
+            )}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
 
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-5">
@@ -173,7 +279,7 @@ export function ClientsPage() {
             onValueChange={(value) => setParam('provider', value === 'all' ? '' : value)}
             options={[
               { value: 'all', label: 'All offices' },
-              ...(providersQuery.data ?? []).map((provider) => ({
+              ...(clientsQuery.data?.providers ?? []).map((provider) => ({
                 value: String(provider.id),
                 label: provider.name,
               })),
@@ -221,17 +327,16 @@ export function ClientsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                  <th className="px-5 py-3 font-medium">Name</th>
-                  <th className="px-3 py-3 font-medium">Type</th>
-                  <th className="px-3 py-3 font-medium">Office</th>
-                  <th className="px-3 py-3 font-medium">Application ID</th>
-                  <th className="px-3 py-3 font-medium">Documents</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                  <th className="px-3 py-3 font-medium">Contact</th>
+                  <th className="px-5 py-3">{renderHeader('name', 'Name')}</th>
+                  <th className="px-3 py-3">{renderHeader('type', 'Type')}</th>
+                  <th className="px-3 py-3">{renderHeader('office', 'Office')}</th>
+                  <th className="px-3 py-3">{renderHeader('applicationId', 'Application ID')}</th>
+                  <th className="px-3 py-3">{renderHeader('status', 'Status')}</th>
+                  <th className="px-3 py-3">{renderHeader('added', 'Added')}</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleClients.map((client) => (
+                {sortedClients.map((client) => (
                   <tr
                     key={client.id}
                     onClick={() => setSelectedClientId(client.id)}
@@ -244,18 +349,17 @@ export function ClientsPage() {
                   >
                     <td className="px-5 py-3 font-medium text-slate-800">{client.full_name}</td>
                     <td className="px-3 py-3 text-slate-600">{client.application_type}</td>
-                    <td className="px-3 py-3 text-slate-600">{client.provider_name}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-500">
-                      {client.official_application_id || '—'}
-                    </td>
-                    <td className="px-3 py-3">
-                      {client.missing_document_count === 0 ? (
-                        <span className="text-xs text-success">Complete</span>
-                      ) : (
-                        <span className="text-xs text-amber">
-                          {client.missing_document_count} missing
+                    <td className="px-3 py-3 text-slate-600">
+                      {client.provider_name}
+                      {foreignCountry(client.appointment_country_name ?? client.country_name) && (
+                        <span className="text-xs text-slate-400">
+                          {' '}
+                          · {foreignCountry(client.appointment_country_name ?? client.country_name)}
                         </span>
                       )}
+                    </td>
+                    <td className="px-3 py-3 font-mono text-xs text-slate-500">
+                      {client.official_application_id || '—'}
                     </td>
                     <td className="px-3 py-3">
                       <Badge tone={statusTone[client.desktop_status] ?? 'gray'}>
@@ -263,7 +367,7 @@ export function ClientsPage() {
                       </Badge>
                     </td>
                     <td className="px-3 py-3 text-xs text-slate-500">
-                      {client.phone || client.email || '—'}
+                      {formatDateTime(client.created_at)}
                     </td>
                   </tr>
                 ))}
@@ -278,6 +382,12 @@ export function ClientsPage() {
           </>
         )}
       </Card>
+
+      <ImportOfficialDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onCreated={onImported}
+      />
 
       <Drawer
         open={selectedClientId !== null}
@@ -312,7 +422,13 @@ export function ClientsPage() {
               <div>
                 <dt className="text-xs text-slate-400">Office</dt>
                 <dd className="text-slate-800">
-                  {detail.provider_name} · {latinName(detail.district_name)}
+                  {[
+                    detail.provider_name,
+                    detail.district_name ? latinName(detail.district_name) : '',
+                    foreignCountry(detail.appointment_country_name ?? detail.country_name),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </dd>
               </div>
               <div>

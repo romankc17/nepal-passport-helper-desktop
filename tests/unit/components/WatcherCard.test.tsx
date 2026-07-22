@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, screen } from '@testing-library/react';
+import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Watcher } from '../../../src/shared/types';
 import { WatcherCard } from '../../../src/renderer/src/components/WatcherCard';
@@ -19,6 +20,7 @@ const watcher: Watcher = {
   days_ahead: 7,
   desired_bookings: 5,
   notify: true,
+  notification_email: 'test@example.com',
   active: true,
   last_checked_at: null,
   next_check_due_at: null,
@@ -88,5 +90,81 @@ describe('WatcherCard', () => {
     renderCard();
     expect(await screen.findByText('2 clients')).toBeInTheDocument();
     expect(screen.getByText('every 5 min')).toBeInTheDocument();
+  });
+
+  it('check now asks the scheduler for a manual run', async () => {
+    const desktop = mockSignedIn([{ watcherId: 88, state: 'scheduled' }]);
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: 'Check Rupandehi now' }));
+    await waitFor(() => {
+      expect(desktop.scheduler.checkNow).toHaveBeenCalledWith(88);
+    });
+  });
+
+  it('explains why a manual check did not start instead of staying silent', async () => {
+    const desktop = mockSignedIn([{ watcherId: 88, state: 'scheduled' }]);
+    desktop.scheduler.checkNow = vi
+      .fn()
+      .mockResolvedValue({ requested: false, reason: 'already-running' });
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: 'Check Rupandehi now' }));
+    expect(
+      await screen.findByText('A check is already running for this watcher'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows an in-progress indicator in the history while a check runs', async () => {
+    const desktop = mockSignedIn([{ watcherId: 88, state: 'checking' }]);
+    desktop.watchers.history = vi
+      .fn()
+      .mockResolvedValue({ items: [], page: 1, page_size: 25, total: 0 });
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: 'History for Rupandehi' }));
+    expect(await screen.findByText(/Checking now/)).toBeInTheDocument();
+  });
+
+  it('refreshes the history when a check finishes', async () => {
+    const desktop = mockSignedIn([]);
+    let listener: ((event: unknown) => void) | null = null;
+    (desktop.on as ReturnType<typeof vi.fn>).mockImplementation(
+      (channel: string, callback: (event: unknown) => void) => {
+        if (channel === 'watcher-state') listener = callback;
+        return () => undefined;
+      },
+    );
+    desktop.watchers.history = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          started_at: '2026-07-21T09:59:00Z',
+          finished_at: '2026-07-21T10:00:00Z',
+          success: true,
+          error: null,
+          slots_found: 3,
+          request: {},
+          response: {},
+        },
+      ],
+      page: 1,
+      page_size: 25,
+      total: 1,
+    });
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: 'History for Rupandehi' }));
+    await waitFor(() => expect(desktop.watchers.history).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('3 slots')).toBeInTheDocument();
+
+    act(() => {
+      listener?.({ type: 'watcher-state', watcherId: 88, state: 'checking' });
+    });
+    act(() => {
+      listener?.({
+        type: 'watcher-state',
+        watcherId: 88,
+        state: 'scheduled',
+        lastResult: { status: 'ok', slotsFound: 3, bookedCount: 0 },
+      });
+    });
+    await waitFor(() => expect(desktop.watchers.history).toHaveBeenCalledTimes(2));
   });
 });
