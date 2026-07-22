@@ -119,13 +119,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v5
+
       - name: Download artifacts
         uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
-
-      - uses: actions/checkout@v5
 
       - name: Publish installers and updater metadata
         shell: bash
