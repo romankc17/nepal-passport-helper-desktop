@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Typecheck, unit tests, build, e2e
+    name: Typecheck, unit tests, build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -33,14 +33,6 @@ jobs:
 
       - name: Build
         run: npm run build
-
-      - name: Install Electron runtime libraries
-        run: npx playwright install-deps
-
-      - name: E2E tests (headless Electron via xvfb)
-        run: xvfb-run -a npx playwright test
-        env:
-          CI: '1'
 
   build:
     name: Package (${{ matrix.os }})
@@ -71,6 +63,12 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: E2E tests (macOS)
+        if: runner.os == 'macOS'
+        run: npx playwright test
+        env:
+          CI: '1'
 
       - name: Package (Windows NSIS)
         if: runner.os == 'Windows'
