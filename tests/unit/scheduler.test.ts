@@ -66,6 +66,19 @@ describe('WatcherScheduler', () => {
     expect(harness.checkNow).toHaveBeenCalledTimes(3);
   });
 
+  it('reschedules a pending check when its interval changes', async () => {
+    const harness = makeHarness();
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 300, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(harness.checkNow).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+  });
+
   it('applies ±10% jitter to the success interval', async () => {
     const randomValues = [0, 1];
     const events: SchedulerEvent[] = [];
