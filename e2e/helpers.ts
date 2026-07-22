@@ -7,7 +7,11 @@ import { MockServer } from './mock-server';
 export const PROJECT_ROOT = join(__dirname, '..');
 export const ELECTRON_BIN = join(
   PROJECT_ROOT,
-  'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron',
+  process.platform === 'darwin'
+    ? 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'
+    : process.platform === 'win32'
+      ? 'node_modules/electron/dist/electron.exe'
+      : 'node_modules/electron/dist/electron',
 );
 
 export interface TestApp {
