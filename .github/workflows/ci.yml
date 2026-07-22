@@ -15,9 +15,9 @@ jobs:
     name: Typecheck, unit tests, build, e2e
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -55,9 +55,9 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -126,7 +126,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Publish installers and updater metadata
         shell: bash

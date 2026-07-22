@@ -22,13 +22,19 @@ vi.mock('electron-updater', () => ({ autoUpdater: updater.autoUpdater }));
 import { createUpdateManager } from '../../src/main/update';
 
 describe('update manager', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+
   beforeEach(() => {
     vi.useFakeTimers();
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
     updater.autoUpdater.checkForUpdates.mockClear();
     updater.autoUpdater.quitAndInstall.mockClear();
   });
 
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform);
+    vi.useRealTimers();
+  });
 
   it('retains downloaded status and keeps checking every four hours', async () => {
     const manager = createUpdateManager({ getWindow: () => null });
