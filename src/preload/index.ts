@@ -88,6 +88,7 @@ const desktopApi = {
     close: () => call(channels.officialImportClose),
   },
   queue: {
+    get: () => call(channels.queueGet),
     add: (input: QueueAddInput) => call(channels.queueAdd, input),
     remove: (bookingIds: number[]) => call(channels.queueRemove, bookingIds),
     bookNow: (input: BookNowInput) => call(channels.queueBookNow, input),
@@ -109,7 +110,6 @@ const desktopApi = {
   },
   appointments: {
     list: (query?: AppointmentListQuery) => call(channels.appointmentsList, query),
-    cancel: (bookingId: number) => call(channels.appointmentsCancel, bookingId),
     receipt: (bookingId: number) => call(channels.appointmentsReceipt, bookingId),
     reconcile: (clientIds?: number[]) => call(channels.appointmentsReconcile, clientIds),
     saveReceipt: (bookingId: number, filename: string) =>
@@ -138,6 +138,7 @@ const desktopApi = {
   settings: {
     get: () => call(channels.settingsGet),
     update: (patch: AppSettingsPatch) => call(channels.settingsUpdate, patch),
+    refreshOfficialSession: () => call(channels.officialSessionRefresh),
   },
   window: {
     minimizeToTray: () => call(channels.windowMinimizeToTray),

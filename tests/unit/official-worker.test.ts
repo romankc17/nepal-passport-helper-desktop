@@ -15,7 +15,6 @@ describe('OfficialWorker', () => {
       watcherLocalPlan: vi.fn().mockResolvedValue({
         run_id: 'run-1',
         jobs: [{
-          booking_id: 9,
           client_id: 4,
           application_id: 'WPT-4',
           date: '2026-07-25',
@@ -47,7 +46,9 @@ describe('OfficialWorker', () => {
       appointmentRecords: vi.fn(),
     };
 
-    const result = await new OfficialWorker(api as never, official as never).checkWatcher(3, true);
+    const result = await new OfficialWorker(api as never, official as never).checkWatcher(
+      3, true, undefined, [4],
+    );
 
     expect(result.slots_found).toBe(1);
     expect(official.bookAppointment).toHaveBeenCalledWith({
@@ -67,7 +68,7 @@ describe('OfficialWorker', () => {
       3,
       'run-1',
       [{ date: '2026-07-25', start_time: '09:00', end_time: '09:30' }],
-      [expect.objectContaining({ booking_id: 9, booked: true, application_id: 'WPT-4' })],
+      [expect.objectContaining({ client_id: 4, booked: true, application_id: 'WPT-4' })],
     );
   });
 
@@ -75,7 +76,7 @@ describe('OfficialWorker', () => {
     const api = {
       labBookLocalPrepare: vi.fn().mockResolvedValue({
         batch_id: 'lab-1',
-        watchers: [{ watcher_id: 12, record_id: 7 }],
+        watchers: [{ watcher_id: 12, record_id: 7, client_id: 17 }],
       }),
       watcherLocalStart: vi.fn().mockResolvedValue({
         checked: false,

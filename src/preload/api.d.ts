@@ -28,6 +28,7 @@ import type {
   LabReconcileResult,
   LabSubmitInput,
   LabSubmitResult,
+  LocalQueueItem,
   LabSummary,
   LocationItem,
   LocationKind,
@@ -67,7 +68,8 @@ export type EventChannel =
   | 'play-sound'
   | 'auth-expired'
   | 'update-status'
-  | 'official-import-state';
+  | 'official-import-state'
+  | 'local-queue-state';
 
 export interface DesktopApi {
   auth: {
@@ -99,6 +101,7 @@ export interface DesktopApi {
     close(): Promise<{ closed: true }>;
   };
   queue: {
+    get(): Promise<{ items: LocalQueueItem[] }>;
     add(input: QueueAddInput): Promise<QueueAddResult>;
     remove(bookingIds: number[]): Promise<QueueRemoveResult>;
     bookNow(input: BookNowInput): Promise<BookNowResult>;
@@ -118,7 +121,6 @@ export interface DesktopApi {
   };
   appointments: {
     list(query?: AppointmentListQuery): Promise<Paged<Appointment>>;
-    cancel(bookingId: number): Promise<{ cancelled: true }>;
     receipt(bookingId: number): Promise<ReceiptResult>;
     reconcile(clientIds?: number[]): Promise<ReconcileResult>;
     saveReceipt(bookingId: number, filename: string): Promise<{ saved: boolean; path: string | null }>;
@@ -148,6 +150,7 @@ export interface DesktopApi {
   settings: {
     get(): Promise<AppSettings>;
     update(patch: AppSettingsPatch): Promise<AppSettings>;
+    refreshOfficialSession(): Promise<{ refreshed: true }>;
   };
   window: {
     minimizeToTray(): Promise<{ hidden: true }>;

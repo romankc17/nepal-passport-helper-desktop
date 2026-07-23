@@ -39,7 +39,7 @@ Stable error codes (non-exhaustive): `VALIDATION_ERROR`, `AUTH_FAILED`,
 
 ### POST `auth/login/`
 Body: `{ "username", "password", "device_id" (uuid from client), "device_name" }`
-→ 200 `{ token: { access_token, access_expires_in (seconds), refresh_token, refresh_expires_in }, user: { id, username, is_staff }, access: { mode, providers: [{id,name}] }, defaults: { interval_seconds } }`
+→ 200 `{ token: { access_token, access_expires_in (seconds), refresh_token, refresh_expires_in }, user: { id, username, is_staff }, access: { mode, providers: [{id,name}], booking_lab }, defaults: { interval_seconds } }`
 → 401 `AUTH_FAILED`, 429 `RATE_LIMITED`.
 
 ### POST `auth/refresh/`
@@ -155,7 +155,8 @@ created_at }`
 ### GET `appointments/?status=booked|cancelled&q=&provider_id=&page=`
 `{ items: [{ booking_id, client_id, client_name, official_application_id,
 appointment_code, provider_id, provider_name, date, start_time, status,
-booked_at, cancelled_at, booked_by_system (bool), receipt_available (bool) }], … }`
+booked_at, cancelled_at, booked_by_system (bool), receipt_available (bool),
+edit_url (absolute web-portal Delete booking & Edit URL) }], … }`
 
 ### POST `appointments/<booking_id>/cancel/` → `{ cancelled: true, booking_id }`
 Cancels the official appointment, invalidates the receipt, frees the client for a fresh booking.
@@ -168,6 +169,8 @@ is cancelled or the receipt is missing. Receipts are never served for cancelled 
 Re-checks official state and adopts SCHEDULED records. → `{ healed: [{ client_id, booking_id, date, start_time }] }`
 
 ## Booking Lab
+
+All `/lab/` endpoints return `403 PERMISSION_DENIED` unless the user has Booking Lab access or is an administrator.
 
 ### GET `lab/summary/`
 → `{ generated, submitted, queued, booked, failed, cancelled, watchers }`

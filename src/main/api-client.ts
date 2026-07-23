@@ -6,8 +6,6 @@ import type {
   ApiEnvelope,
   Appointment,
   AppointmentListQuery,
-  BookNowInput,
-  BookNowResult,
   ClientDetail,
   ClientListQuery,
   ClientListResult,
@@ -36,10 +34,6 @@ import type {
   Paged,
   Preferences,
   PreferencesPatch,
-  ProgressItem,
-  QueueAddInput,
-  QueueAddResult,
-  QueueRemoveResult,
   ReadyByLocationGroup,
   ReceiptResult,
   ReconcileResult,
@@ -201,28 +195,6 @@ export class ApiClient {
     });
   }
 
-  // --- Queue & booking ---
-
-  async queueAdd(input: QueueAddInput): Promise<QueueAddResult> {
-    return this.request<QueueAddResult>('POST', '/queue/', input);
-  }
-
-  async queueRemove(bookingIds: number[]): Promise<QueueRemoveResult> {
-    return this.request<QueueRemoveResult>('POST', '/queue/remove/', { booking_ids: bookingIds });
-  }
-
-  async bookNow(input: BookNowInput): Promise<BookNowResult> {
-    return this.request<BookNowResult>('POST', '/book-now/', input);
-  }
-
-  async progress(bookingIds: number[]): Promise<ProgressItem[]> {
-    const data = await this.request<{ items: ProgressItem[] }>(
-      'GET',
-      `/progress/?booking_ids=${bookingIds.join(',')}`,
-    );
-    return data.items;
-  }
-
   // --- Watchers ---
 
   async watchersList(): Promise<Watcher[]> {
@@ -273,10 +245,12 @@ export class ApiClient {
     id: number,
     runId: string,
     slots: { date: string; start_time: string; end_time: string }[],
+    clientIds: number[] = [],
   ): Promise<{ run_id: string; jobs: LocalBookingJob[] }> {
     return this.request('POST', `/watchers/${id}/local-run/plan/`, {
       run_id: runId,
       slots,
+      client_ids: clientIds,
     });
   }
 
@@ -312,10 +286,6 @@ export class ApiClient {
 
   async appointmentsList(query: AppointmentListQuery): Promise<Paged<Appointment>> {
     return this.request<Paged<Appointment>>('GET', `/appointments/${queryString(query)}`);
-  }
-
-  async appointmentsCancel(bookingId: number): Promise<void> {
-    await this.request('POST', `/appointments/${bookingId}/cancel/`, {});
   }
 
   async appointmentLocalCancelPlan(
@@ -424,7 +394,7 @@ export class ApiClient {
 
   async labBookLocalPrepare(input: LabBookInput): Promise<{
     batch_id: string;
-    watchers: { watcher_id: number; record_id: number }[];
+    watchers: { watcher_id: number; record_id: number; client_id: number }[];
   }> {
     return this.request('POST', '/lab/book/', { ...input, local_execution: true });
   }

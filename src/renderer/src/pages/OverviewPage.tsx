@@ -77,6 +77,10 @@ export function OverviewPage() {
   });
 
   const overview = overviewQuery.data;
+  const localQueueQuery = useQuery({
+    queryKey: queryKeys.localQueue,
+    queryFn: () => api.queue.get(),
+  });
   const loading = overviewQuery.isPending;
 
   const healthyStates = new Set(['scheduled', 'checking', 'backoff', 'idle', 'paused']);
@@ -125,9 +129,9 @@ export function OverviewPage() {
         />
         <StatCard
           icon={Inbox}
-          label="Queued clients"
-          value={overview?.queued_clients}
-          loading={loading}
+          label="Session clients"
+          value={localQueueQuery.data?.items.length}
+          loading={localQueueQuery.isPending}
           tone="bg-navy"
           to="/queue"
         />

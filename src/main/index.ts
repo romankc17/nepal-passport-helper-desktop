@@ -20,6 +20,7 @@ import { isE2E } from './e2e';
 import { getOfficialImportSession } from './official-import';
 import { OfficialApi, OfficialApiError } from './official-api';
 import { OfficialWorker } from './official-worker';
+import { LocalQueueStore } from './local-queue';
 import { applySessionSecurity, createMainWindow, focusOrCreateWindow } from './window';
 import { createUpdateManager } from './update';
 
@@ -65,7 +66,10 @@ async function bootstrap(): Promise<void> {
   });
   const officialImport = getOfficialImportSession({ getWindow: () => mainWindow });
   const officialApi = new OfficialApi({ fetchFn: (url, init) => net.fetch(url, init) });
-  const officialWorker = new OfficialWorker(api, officialApi);
+  const localQueue = new LocalQueueStore();
+  const officialWorker = new OfficialWorker(api, officialApi, localQueue, () => {
+    mainWindow?.webContents.send('local-queue-state', { items: localQueue.all() });
+  });
 
   const notificationsRef: { current: Notifications | null } = { current: null };
   // Each finished run produces a fresh CheckOutcome object, so identity-based
@@ -176,6 +180,7 @@ async function bootstrap(): Promise<void> {
     updateManager,
     officialImport,
     officialWorker,
+    localQueue,
     startWatchers: async () => {
       const watchers = await api.watchersList();
       scheduler.syncFromServer(toSyncItems(watchers));

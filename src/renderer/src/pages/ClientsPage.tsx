@@ -184,14 +184,14 @@ export function ClientsPage() {
         idempotency_key: window.crypto.randomUUID(),
       });
       if (result.queued.length > 0) {
-        toast(`${client.full_name} queued for booking`);
+        toast(`${client.full_name} added to this booking session`);
       } else {
-        toast(result.skipped[0]?.reason ?? 'Client could not be queued', 'error');
+        toast(result.skipped[0]?.reason ?? 'Client could not be added', 'error');
       }
       await queryClient.invalidateQueries({ queryKey: ['clients'] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
     } catch (error) {
-      toast(describeError(error, 'Could not queue client'), 'error');
+      toast(describeError(error, 'Could not add client to this session'), 'error');
     } finally {
       setQueueing(false);
     }
@@ -494,7 +494,7 @@ export function ClientsPage() {
                   loading={queueing}
                   className="w-full"
                 >
-                  Queue for booking
+                  Watch in this session
                 </Button>
               ) : detail.desktop_status === 'not_permitted' ? (
                 <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">

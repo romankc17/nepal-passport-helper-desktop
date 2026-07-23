@@ -41,6 +41,7 @@ import { Vault, VaultUnavailableError } from './vault';
 import { isE2E } from './e2e';
 import type { OfficialImportSession } from './official-import';
 import type { OfficialWorker } from './official-worker';
+import type { LocalQueueStore } from './local-queue';
 import { isTrustedRendererFrame } from './window';
 import type { UpdateManager } from './update';
 
@@ -62,6 +63,7 @@ export interface IpcDeps {
   updateManager: UpdateManager;
   officialImport: OfficialImportSession;
   officialWorker: OfficialWorker;
+  localQueue: LocalQueueStore;
   // Fetches the server watcher list and reconciles scheduler loops.
   startWatchers: () => Promise<void>;
   stopWatchers: () => void;
@@ -105,6 +107,7 @@ export function registerIpc(deps: IpcDeps): void {
   // --- Auth ---
 
   handle(channels.authLogin, async (raw: unknown): Promise<SessionInfo> => {
+    deps.localQueue.clear();
     const input = validateLoginInput(raw);
     if (input.serverUrl && deps.isDev) {
       settings.update({ apiUrl: input.serverUrl });
@@ -123,6 +126,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle(channels.authLogout, async (): Promise<{ signedOut: true }> => {
     deps.stopWatchers();
+    deps.localQueue.clear();
     store.update({ sessionSnapshot: null });
     try {
       await api.logout();
@@ -193,51 +197,103 @@ export function registerIpc(deps: IpcDeps): void {
 
   // --- Queue & booking ---
 
+  const emitLocalQueue = (): void => {
+    deps.getWindow()?.webContents.send('local-queue-state', { items: deps.localQueue.all() });
+  };
+
+  const addToLocalQueue = async (raw: unknown) => {
+    const input = validateQueueAddInput(raw);
+    let watcher = (await api.watchersList()).find(
+      (item) => String(item.provider_id) === String(input.provider_id),
+    );
+    if (!watcher) {
+      watcher = await api.watchersCreate({
+        ...input,
+        mode: 'book',
+        interval_seconds: settings.get().defaultIntervalSeconds,
+        days_ahead: settings.get().defaultDaysAhead,
+      });
+      await deps.resyncWatchers();
+    }
+    const queued: { client_id: number }[] = [];
+    const skipped: { client_id: number; reason: string }[] = [];
+    for (const clientId of input.client_ids) {
+      const client = await api.clientsGet(clientId);
+      if (!client.can_book || String(client.provider_id) !== String(input.provider_id)) {
+        skipped.push({ client_id: clientId, reason: 'not_ready' });
+        continue;
+      }
+      const duplicate = deps.localQueue.add({
+        client_id: client.id,
+        client_name: client.full_name,
+        official_application_id: client.official_application_id,
+        phone: client.phone,
+        email: client.email,
+        location: input,
+      }, Date.now());
+      if (duplicate) skipped.push(duplicate);
+      else queued.push({ client_id: clientId });
+    }
+    emitLocalQueue();
+    return { watcher, queued, skipped };
+  };
+
+  handle(channels.queueGet, () => ({ items: deps.localQueue.all() }));
   handle(channels.queueAdd, async (raw: unknown) => {
-    const result = await api.queueAdd(validateQueueAddInput(raw));
-    await deps.resyncWatchers();
-    return result;
+    return addToLocalQueue(raw);
   });
-  handle(channels.queueRemove, (raw: unknown) => api.queueRemove(asIdArray(raw, 'bookingIds')));
+  handle(channels.queueRemove, (raw: unknown) => {
+    const clientIds = asIdArray(raw, 'clientIds');
+    const removed = deps.localQueue.remove(clientIds);
+    emitLocalQueue();
+    return {
+      removed,
+      skipped: clientIds.filter((id) => !removed.includes(id)).map((id) => ({ client_id: id, reason: 'not_found' })),
+    };
+  });
   handle(channels.queueBookNow, async (raw: unknown) => {
     const input = validateBookNowInput(raw);
-    // The E2E server is an in-memory UI fixture; production always executes
-    // the official calls locally through OfficialWorker below.
-    if (isE2E) return api.bookNow(input);
-    const queued = await api.queueAdd(input);
-    const check = await deps.officialWorker.checkWatcher(queued.watcher.id, true, input.slots);
-    const detail = await api.watchersGet(queued.watcher.id);
-    const byClient = new Map(detail.recent_bookings.map((item) => [item.client_id, item]));
+    const added = await addToLocalQueue(input);
+    const check = await deps.officialWorker.checkWatcher(
+      added.watcher.id, true, input.slots, input.client_ids,
+    );
+    const bookedByClient = new Map(
+      (check.booked as { client_id: number; booking_id: number }[]).map((item) => [item.client_id, item]),
+    );
     const results = input.client_ids.map((clientId) => {
-      const booking = byClient.get(clientId);
-      const skipped = queued.skipped.find((item) => item.client_id === clientId);
-      if (booking?.status === 'booked') {
+      const item = deps.localQueue.get(clientId);
+      const booking = bookedByClient.get(clientId);
+      if (item?.status === 'booked' && item.appointment) {
         return {
           client_id: clientId,
-          booking_id: booking.id,
+          booking_id: booking?.booking_id,
           outcome: 'booked' as const,
-          appointment: { date: booking.date!, start_time: booking.start_time! },
+          appointment: item.appointment,
         };
       }
-      if (booking?.status === 'failed') {
+      if (item?.status === 'failed') {
         return {
           client_id: clientId,
-          booking_id: booking.id,
           outcome: 'failed' as const,
-          error: booking.error ?? 'Official booking failed',
+          error: item.error ?? 'Official booking failed',
         };
       }
       return {
         client_id: clientId,
-        booking_id: booking?.id ?? null,
         outcome: 'queued' as const,
-        error: skipped?.reason,
+        error: added.skipped.find((entry) => entry.client_id === clientId)?.reason,
       };
     });
-    await deps.resyncWatchers();
     return { watcher: check.watcher, results };
   });
-  handle(channels.queueProgress, (raw: unknown) => api.progress(asIdArray(raw, 'bookingIds')));
+  handle(channels.queueProgress, (raw: unknown) => asIdArray(raw, 'clientIds').map((clientId) => {
+    const item = deps.localQueue.get(clientId);
+    return {
+      booking_id: clientId,
+      stage: item?.status === 'queued' ? null : item?.status ?? null,
+      meta: {},
+    };
+  }));
 
   // --- Watchers ---
 
@@ -289,14 +345,6 @@ export function registerIpc(deps: IpcDeps): void {
   handle(channels.appointmentsList, (raw: unknown) =>
     api.appointmentsList(validateAppointmentListQuery(raw)),
   );
-  handle(channels.appointmentsCancel, async (raw: unknown) => {
-    if (isE2E) {
-      await api.appointmentsCancel(asId(raw, 'bookingId'));
-      return { cancelled: true };
-    }
-    await deps.officialWorker.cancelBooking(asId(raw, 'bookingId'));
-    return { cancelled: true };
-  });
   handle(channels.appointmentsReceipt, (raw: unknown) =>
     api.appointmentsReceipt(asId(raw, 'bookingId')),
   );
@@ -383,6 +431,11 @@ export function registerIpc(deps: IpcDeps): void {
   handle(channels.settingsUpdate, (raw: unknown): AppSettings =>
     settings.update(validateAppSettingsPatch(raw)),
   );
+  handle(channels.officialSessionRefresh, async () => {
+    await deps.officialImport.close();
+    await deps.officialWorker.refreshToken();
+    return { refreshed: true as const };
+  });
 
   // --- Window & app ---
 

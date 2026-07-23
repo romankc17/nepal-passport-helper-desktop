@@ -8,17 +8,25 @@ import type {
 } from '../shared/types';
 import type { ApiClient } from './api-client';
 import type { FoundOfficialSlot, OfficialApi } from './official-api';
+import type { LocalQueueStore } from './local-queue';
 
 export class OfficialWorker {
   constructor(
     private readonly api: ApiClient,
     private readonly official: OfficialApi,
+    private readonly localQueue?: LocalQueueStore,
+    private readonly onQueueChange: () => void = () => undefined,
   ) {}
+
+  async refreshToken(): Promise<void> {
+    await this.official.refreshToken();
+  }
 
   async checkWatcher(
     watcherId: number,
     force: boolean,
     selectedSlots?: string[],
+    requestedClientIds?: number[],
   ): Promise<WatcherCheckResult> {
     const start = await this.api.watcherLocalStart(watcherId, force);
     if (!start.checked) {
@@ -43,14 +51,34 @@ export class OfficialWorker {
         const selected = new Set(selectedSlots);
         slots = slots.filter((slot) => selected.has(`${slot.date}|${slot.start_time}`));
       }
-      const plan = await this.api.watcherLocalPlan(watcherId, runId, slots);
+      const clientIds = requestedClientIds ?? this.localQueue
+        ?.forProvider(start.provider_id!)
+        .filter((item) => item.status === 'queued' || (item.status === 'failed' && !item.permanent))
+        .map((item) => item.client_id) ?? [];
+      const plan = await this.api.watcherLocalPlan(watcherId, runId, slots, clientIds);
+      for (const job of plan.jobs) this.localQueue?.setStatus(job.client_id, 'booking');
+      if (plan.jobs.length) this.onQueueChange();
       const results: LocalBookingResult[] = [];
       for (let offset = 0; offset < plan.jobs.length; offset += 4) {
         results.push(
           ...(await Promise.all(plan.jobs.slice(offset, offset + 4).map((job) => this.runJob(job)))),
         );
       }
-      return await this.api.watcherLocalComplete(watcherId, runId, slots, results);
+      const completed = await this.api.watcherLocalComplete(watcherId, runId, slots, results);
+      for (const result of results) {
+        this.localQueue?.update(result.client_id, result.booked ? {
+          status: 'booked',
+          official_application_id: result.application_id,
+          appointment: { date: result.date, start_time: result.start_time },
+          error: undefined,
+        } : {
+          status: 'failed',
+          official_application_id: result.application_id,
+          error: result.error,
+        });
+      }
+      if (results.length) this.onQueueChange();
+      return completed;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Official portal request failed';
       try {
@@ -125,7 +153,9 @@ export class OfficialWorker {
   async bookLab(input: LabBookInput): Promise<{ batch_id: string }> {
     const plan = await this.api.labBookLocalPrepare(input);
     await Promise.allSettled(
-      plan.watchers.map(({ watcher_id }) => this.checkWatcher(watcher_id, true)),
+      plan.watchers.map(({ watcher_id, client_id }) =>
+        this.checkWatcher(watcher_id, true, undefined, [client_id]),
+      ),
     );
     await this.api.labBookLocalComplete(plan.batch_id);
     return { batch_id: plan.batch_id };
@@ -170,7 +200,7 @@ export class OfficialWorker {
       }
       if (job.application_id) receipt = await this.official.refreshReceipt(applicationPayload);
       return {
-        booking_id: job.booking_id,
+        client_id: job.client_id,
         application_id: applicationId,
         booked: true,
         date,
@@ -180,7 +210,7 @@ export class OfficialWorker {
       };
     } catch (error) {
       return {
-        booking_id: job.booking_id,
+        client_id: job.client_id,
         application_id: applicationId,
         booked: false,
         date,

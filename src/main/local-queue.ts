@@ -71,6 +71,10 @@ export class LocalQueueStore {
     return this.all().filter((item) => localQueueLocationKey(item.location) === key);
   }
 
+  forProvider(providerId: number | string): LocalQueueItem[] {
+    return this.all().filter((item) => String(item.location.provider_id) === String(providerId));
+  }
+
   /** Location keys that currently hold at least one item. */
   locations(): { key: string; location: LocalQueueLocation }[] {
     const seen = new Map<string, LocalQueueLocation>();

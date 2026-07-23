@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Inbox, ListOrdered, Zap } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { ClientSummary, ReadyByLocationGroup } from '../../../shared/types';
+import type { ClientSummary, LocalQueueItem, ReadyByLocationGroup } from '../../../shared/types';
 import { api, queryKeys } from '../api';
 import { Badge, type BadgeTone } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -79,14 +79,22 @@ export function QueuePage() {
     staleTime: 60000,
   });
 
-  const watchersQuery = useQuery({
-    queryKey: queryKeys.watchers,
-    queryFn: () => api.watchers.list(),
-    refetchInterval: 60000,
-    staleTime: 60000,
+  const localQueueQuery = useQuery({
+    queryKey: queryKeys.localQueue,
+    queryFn: () => api.queue.get(),
   });
 
-  const queuedWatchers = (watchersQuery.data ?? []).filter((watcher) => watcher.queued_count > 0);
+  useEffect(() => window.desktop.on('local-queue-state', (payload) => {
+    queryClient.setQueryData(queryKeys.localQueue, payload as { items: LocalQueueItem[] });
+  }), [queryClient]);
+
+  const sessionGroups = [...(localQueueQuery.data?.items ?? []).reduce((groups, item) => {
+    const key = String(item.location.provider_id);
+    const group = groups.get(key) ?? { name: item.location.provider_name, items: [] as LocalQueueItem[] };
+    group.items.push(item);
+    groups.set(key, group);
+    return groups;
+  }, new Map<string, { name: string; items: LocalQueueItem[] }>()).entries()];
 
   const groups = readyQuery.data ?? [];
 
@@ -152,7 +160,7 @@ export function QueuePage() {
       if (action === 'queue') {
         const result = await startQueue(input, clientNames);
         toast(
-          `Queued ${result.queued.length} client${result.queued.length === 1 ? '' : 's'} · ${group.provider_name}`,
+          `Watching ${result.queued.length} client${result.queued.length === 1 ? '' : 's'} this session · ${group.provider_name}`,
         );
       } else {
         const result = await startBookNow(input, clientNames);
@@ -161,14 +169,14 @@ export function QueuePage() {
         const failed = result.results.filter((entry) => entry.outcome === 'failed').length;
         toast(
           booked > 0
-            ? `Booked ${booked} · queued ${queued} · failed ${failed}`
-            : 'No slot available — clients stay queued and watchers keep trying.',
+            ? `Booked ${booked} · waiting this session ${queued} · failed ${failed}`
+            : 'No slot available — clients remain in this desktop session.',
           booked > 0 ? 'success' : 'error',
         );
       }
       setSelected(new Set());
       await queryClient.invalidateQueries({ queryKey: queryKeys.readyByLocation });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.localQueue });
     } catch (error) {
       toast(describeError(error, 'Operation failed'), 'error');
     } finally {
@@ -181,10 +189,9 @@ export function QueuePage() {
     setRemoving(true);
     try {
       await api.queue.remove([removeBooking.id]);
-      toast(`Removed ${removeBooking.name} from the queue`);
+      toast(`Stopped watching ${removeBooking.name}`);
       setRemoveBooking(null);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
-      await queryClient.invalidateQueries({ queryKey: ['watchers'] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.localQueue });
     } catch (error) {
       toast(describeError(error, 'Could not remove booking'), 'error');
     } finally {
@@ -195,8 +202,8 @@ export function QueuePage() {
   return (
     <div>
       <PageHeader
-        title="Booking Queue"
-        description="Queue ready clients and let watchers book them as slots open"
+        title="Booking Session"
+        description="Keep selected clients in this desktop session and book them when watchers find slots"
       />
 
       <Card className="mb-6">
@@ -244,7 +251,7 @@ export function QueuePage() {
             onValueChange={(value) => setParam('status', value === 'all' ? '' : value)}
             options={[
               { value: 'all', label: 'All statuses' },
-              ...['ready', 'incomplete', 'queued', 'booked', 'not_permitted', 'cancelled'].map(
+              ...['ready', 'incomplete', 'booked', 'not_permitted', 'cancelled'].map(
                 (status) => ({ value: status, label: status.replace('_', ' ') }),
               ),
             ]}
@@ -297,7 +304,7 @@ export function QueuePage() {
                         onClick={() => void runForGroup(group, 'queue')}
                       >
                         <ListOrdered className="h-3.5 w-3.5" aria-hidden="true" />
-                        Queue selected ({selectedIds.length})
+                        Watch this session ({selectedIds.length})
                       </Button>
                       <Button
                         size="sm"
@@ -355,47 +362,47 @@ export function QueuePage() {
         </div>
       )}
 
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">Currently queued</h2>
-      {queuedWatchers.length === 0 ? (
+      <h2 className="mb-3 text-sm font-semibold text-slate-700">This session</h2>
+      {sessionGroups.length === 0 ? (
         <Card>
           <EmptyState
             icon={ListOrdered}
-            title="Nothing queued"
-            description="Queued clients appear here. If no slot is available, clients stay queued and watchers keep trying automatically."
+            title="No clients selected"
+            description="Selections are kept only in this desktop session and disappear when you sign out or close the app."
           />
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {queuedWatchers.map((watcher) => (
-              <Card key={watcher.id}>
+          {sessionGroups.map(([providerId, group]) => (
+              <Card key={providerId}>
                 <CardHeader
-                  title={`${watcher.provider_name} · ${watcher.queued_count} queued`}
+                  title={`${group.name} · ${group.items.length} selected`}
                 />
                 <ul className="divide-y divide-slate-100">
-                  {(watcher.priority_bookings ?? []).map((booking) => (
-                      <li key={booking.id} className="flex items-center gap-3 px-5 py-2.5">
+                  {group.items.map((item) => (
+                      <li key={item.client_id} className="flex items-center gap-3 px-5 py-2.5">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium text-slate-800">
-                            {booking.client_name}
+                            {item.client_name}
                           </p>
-                          <p className="text-xs text-slate-400">Booking #{booking.id}</p>
+                          <p className="text-xs text-slate-400">Stored locally for this session</p>
                         </div>
                         <Badge
                           tone={
-                            booking.status === 'failed'
+                            item.status === 'failed'
                               ? 'red'
-                              : booking.status === 'pending'
+                              : item.status === 'queued'
                                 ? 'amber'
-                                : 'blue'
+                                : 'green'
                           }
                         >
-                          {booking.status}
+                          {item.status}
                         </Badge>
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => setRemoveBooking({ id: booking.id, name: booking.client_name })}
-                          aria-label={`Remove ${booking.client_name} from queue`}
+                          onClick={() => setRemoveBooking({ id: item.client_id, name: item.client_name })}
+                          aria-label={`Remove ${item.client_name} from this session`}
                         >
                           Remove
                         </Button>
@@ -412,8 +419,8 @@ export function QueuePage() {
         onOpenChange={(open) => {
           if (!open) setRemoveBooking(null);
         }}
-        title="Remove from queue"
-        description={`Remove ${removeBooking?.name ?? 'this client'} from the booking queue? Only pending or failed bookings can be removed.`}
+        title="Remove from this session"
+        description={`Stop watching for an appointment for ${removeBooking?.name ?? 'this client'}?`}
         confirmLabel="Remove"
         danger
         loading={removing}

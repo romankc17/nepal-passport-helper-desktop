@@ -46,7 +46,6 @@ function createMock(): MockShape {
     },
     appointments: {
       list: vi.fn(),
-      cancel: vi.fn(),
       receipt: vi.fn(),
       reconcile: vi.fn(),
       saveReceipt: vi.fn(),
@@ -74,6 +73,7 @@ function createMock(): MockShape {
         theme: 'system',
       }),
       update: vi.fn(),
+      refreshOfficialSession: vi.fn().mockResolvedValue({ refreshed: true }),
     },
     window: { minimizeToTray: vi.fn(), quit: vi.fn() },
     app: { version: vi.fn().mockResolvedValue('0.1.0') },

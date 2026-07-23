@@ -9,16 +9,24 @@ test.describe('activity feed', () => {
     await loginViaUI(ctx.page);
 
     ctx.mock.setScenario('booking_success');
-    await ctx.page.evaluate(async () => {
-      await window.desktop.queue.bookNow({
+    await fetch(`http://127.0.0.1:${ctx.port}/api/desktop/v1/book-now/`, {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer mock-access-test',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
         provider_id: 501,
         district_id: '280',
         province_id: '226',
         provider_name: 'Rupandehi',
         client_ids: [101],
         idempotency_key: 'activity-flow-book-1',
-      });
-      return window.desktop.appointments.cancel(500);
+      }),
+    });
+    await fetch(`http://127.0.0.1:${ctx.port}/api/desktop/v1/appointments/500/cancel/`, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer mock-access-test' },
     });
   });
 

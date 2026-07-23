@@ -7,7 +7,6 @@ import { api, queryKeys } from '../api';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { Pagination } from '../components/Pagination';
@@ -29,7 +28,6 @@ export function AppointmentsPage() {
 
   const tab = (searchParams.get('tab') as AppointmentStatus) || 'booked';
   const page = Number(searchParams.get('page') ?? '1') || 1;
-  const [cancelTarget, setCancelTarget] = useState<{ id: number; name: string } | null>(null);
   const [savingReceiptFor, setSavingReceiptFor] = useState<number | null>(null);
 
   const setParam = (key: string, value: string) => {
@@ -57,16 +55,6 @@ export function AppointmentsPage() {
     await queryClient.invalidateQueries({ queryKey: ['clients'] });
     await queryClient.invalidateQueries({ queryKey: queryKeys.overview });
   };
-
-  const cancelMutation = useMutation({
-    mutationFn: (bookingId: number) => api.appointments.cancel(bookingId),
-    onSuccess: async () => {
-      toast(`Appointment cancelled · ${cancelTarget?.name ?? ''}`);
-      setCancelTarget(null);
-      await invalidate();
-    },
-    onError: (error) => toast(describeError(error, 'Could not cancel appointment'), 'error'),
-  });
 
   const reconcileMutation = useMutation({
     mutationFn: () => api.appointments.reconcile(),
@@ -232,19 +220,15 @@ export function AppointmentsPage() {
                           </Button>
                         )}
                         {tab === 'booked' && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() =>
-                              setCancelTarget({
-                                id: appointment.booking_id,
-                                name: appointment.client_name,
-                              })
-                            }
-                            aria-label={`Cancel appointment for ${appointment.client_name}`}
+                          <a
+                            href={appointment.edit_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`Delete booking and edit ${appointment.client_name}`}
+                            className="inline-flex h-8 items-center rounded-md px-3 text-xs font-medium text-danger transition-colors hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                           >
-                            <span className="text-danger">Cancel</span>
-                          </Button>
+                            Delete booking &amp; Edit
+                          </a>
                         )}
                       </div>
                     </td>
@@ -261,19 +245,6 @@ export function AppointmentsPage() {
           </>
         )}
       </Card>
-
-      <ConfirmDialog
-        open={cancelTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setCancelTarget(null);
-        }}
-        title="Cancel appointment"
-        description={`Cancel the appointment for ${cancelTarget?.name ?? 'this client'}? The official appointment is cancelled and the client becomes bookable again.`}
-        confirmLabel="Cancel appointment"
-        danger
-        loading={cancelMutation.isPending}
-        onConfirm={() => cancelTarget && cancelMutation.mutate(cancelTarget.id)}
-      />
     </div>
   );
 }

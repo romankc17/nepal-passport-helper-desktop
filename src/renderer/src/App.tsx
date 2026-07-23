@@ -46,6 +46,11 @@ function LoginRoute() {
   return <LoginPage />;
 }
 
+function BookingLabRoute() {
+  const { session } = useAuth();
+  return session?.access.booking_lab ? <BookingLabPage /> : <Navigate to="/" replace />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -64,7 +69,7 @@ export default function App() {
           <Route path="/watchers" element={<WatchersPage />} />
           <Route path="/queue" element={<QueuePage />} />
           <Route path="/clients" element={<ClientsPage />} />
-          <Route path="/booking-lab" element={<BookingLabPage />} />
+          <Route path="/booking-lab" element={<BookingLabRoute />} />
           <Route path="/appointments" element={<AppointmentsPage />} />
           <Route path="/activity" element={<ActivityPage />} />
           <Route path="/settings" element={<SettingsPage />} />

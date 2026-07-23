@@ -31,6 +31,7 @@ export const channels = {
   clientsGet: 'clients:get',
   clientsReadyByLocation: 'clients:ready-by-location',
   queueAdd: 'queue:add',
+  queueGet: 'queue:get',
   queueRemove: 'queue:remove',
   queueBookNow: 'queue:book-now',
   queueProgress: 'queue:progress',
@@ -45,7 +46,6 @@ export const channels = {
   watchersReorder: 'watchers:reorder',
   watchersHistory: 'watchers:history',
   appointmentsList: 'appointments:list',
-  appointmentsCancel: 'appointments:cancel',
   appointmentsReceipt: 'appointments:receipt',
   appointmentsReconcile: 'appointments:reconcile',
   appointmentsSaveReceipt: 'appointments:save-receipt',
@@ -61,6 +61,7 @@ export const channels = {
   schedulerSync: 'scheduler:sync',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
+  officialSessionRefresh: 'official-session:refresh',
   windowMinimizeToTray: 'window:minimize-to-tray',
   windowQuit: 'window:quit',
   appVersion: 'app:version',
@@ -98,6 +99,7 @@ export const eventChannels = [
   'auth-expired',
   'update-status',
   'official-import-state',
+  'local-queue-state',
 ] as const;
 
 export type EventChannel = (typeof eventChannels)[number];

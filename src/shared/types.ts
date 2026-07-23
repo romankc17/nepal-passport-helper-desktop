@@ -37,6 +37,7 @@ export interface AccessProvider {
 export interface Access {
   mode: string;
   providers: AccessProvider[];
+  booking_lab: boolean;
 }
 
 export interface AccountDefaults {
@@ -232,13 +233,13 @@ export interface QueueAddInput {
 
 export interface QueueAddResult {
   watcher: Watcher;
-  queued: { client_id: number; booking_id: number }[];
+  queued: { client_id: number }[];
   skipped: { client_id: number; reason: string }[];
 }
 
 export interface QueueRemoveResult {
   removed: number[];
-  skipped: { booking_id: number; reason: string }[];
+  skipped: { client_id: number; reason: string }[];
 }
 
 export interface BookNowInput extends QueueAddInput {
@@ -247,7 +248,7 @@ export interface BookNowInput extends QueueAddInput {
 
 export interface BookNowResultItem {
   client_id: number;
-  booking_id: number;
+  booking_id?: number;
   outcome: 'booked' | 'queued' | 'failed';
   error?: string;
   appointment?: AppointmentRef;
@@ -344,7 +345,6 @@ export interface LocalRunStart {
 }
 
 export interface LocalBookingJob {
-  booking_id: number;
   client_id: number;
   application_id: string;
   date: string;
@@ -355,7 +355,7 @@ export interface LocalBookingJob {
 }
 
 export interface LocalBookingResult {
-  booking_id: number;
+  client_id: number;
   application_id: string;
   booked: boolean;
   date: string;
@@ -429,6 +429,7 @@ export interface Appointment {
   cancelled_at: string | null;
   booked_by_system: boolean;
   receipt_available: boolean;
+  edit_url: string;
   country_id?: number | string;
   country_name?: string;
 }

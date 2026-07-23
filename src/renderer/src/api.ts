@@ -14,6 +14,7 @@ export const queryKeys = {
   clients: (query?: ClientListQuery) => ['clients', query] as const,
   client: (id: number) => ['clients', id] as const,
   readyByLocation: ['clients', 'ready-by-location'] as const,
+  localQueue: ['local-queue'] as const,
   appointments: (query?: AppointmentListQuery) => ['appointments', query] as const,
   activity: (query?: ActivityQuery) => ['activity', query] as const,
   preferences: ['preferences'] as const,

@@ -35,7 +35,7 @@ function mockSignedIn(runtimeEntries: { watcherId: number; state: string }[]) {
   const desktop = installDesktopMock();
   desktop.auth.getSession = vi.fn().mockResolvedValue({
     user: { id: 1, username: 'admin', is_staff: true },
-    access: { mode: 'providers', providers: [] },
+    access: { mode: 'providers', providers: [], booking_lab: true },
     defaults: { interval_seconds: 300 },
     offline: false,
   });

@@ -995,6 +995,7 @@ export class MockServer {
       cancelled_at: booking.cancelled_at,
       booked_by_system: booking.booked_by_system,
       receipt_available: booking.receipt_available,
+      edit_url: `https://example.test/clients/${booking.client_id}/edit/?delete_booking=1`,
     };
   }
 

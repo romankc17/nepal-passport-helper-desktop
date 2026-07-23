@@ -389,7 +389,7 @@ export function BookingLabPage() {
 
   const tabs = [
     { key: 'generated' as LabTab, label: 'Generated', icon: FlaskConical },
-    { key: 'submitted' as LabTab, label: 'Submitted / Queue', icon: ListOrdered },
+    { key: 'submitted' as LabTab, label: 'Submitted', icon: ListOrdered },
     { key: 'booked' as LabTab, label: 'Booked', icon: BookOpen },
     { key: 'watchers' as LabTab, label: 'Watchers', icon: Clock },
     { key: 'history' as LabTab, label: 'History', icon: History },
@@ -409,10 +409,9 @@ export function BookingLabPage() {
       />
 
       {summary && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <SummaryCard label="Generated drafts" value={drafts.length} icon={Inbox} />
           <SummaryCard label="Submitted" value={summary.submitted} icon={CheckCircle2} tone="bg-blue-50" />
-          <SummaryCard label="Queued" value={summary.queued} icon={Clock} tone="bg-amber-50" />
           <SummaryCard label="Booked" value={summary.booked} icon={BookOpen} tone="bg-green-50" />
           <SummaryCard label="Failed" value={summary.failed} icon={XCircle} tone="bg-red-50" />
           <SummaryCard label="Watchers" value={summary.watchers} icon={Users} tone="bg-purple-50" />
@@ -458,7 +457,6 @@ export function BookingLabPage() {
               options={[
                 { value: 'all', label: 'All statuses' },
                 { value: 'submitted', label: 'Submitted' },
-                { value: 'queued', label: 'Queued' },
                 { value: 'booked', label: 'Booked' },
                 { value: 'failed', label: 'Failed' },
                 { value: 'cancelled', label: 'Cancelled' },
@@ -812,7 +810,6 @@ export function BookingLabPage() {
                       <th className="pb-2 pr-4">Mode</th>
                       <th className="pb-2 pr-4">Status</th>
                       <th className="pb-2 pr-4">Slots found</th>
-                      <th className="pb-2 pr-4">Queued</th>
                       <th className="pb-2 pr-4">Last check</th>
                       <th className="pb-2">Error</th>
                     </tr>
@@ -836,7 +833,6 @@ export function BookingLabPage() {
                           </Badge>
                         </td>
                         <td className="py-3 pr-4 text-slate-600">{watcher.available_slots.length}</td>
-                        <td className="py-3 pr-4 text-slate-600">{watcher.queued_count}</td>
                         <td className="py-3 pr-4 text-slate-500">
                           {watcher.last_checked_at ? formatDateTime(watcher.last_checked_at) : '—'}
                         </td>

@@ -20,6 +20,7 @@ const baseAppointment: Appointment = {
   cancelled_at: null,
   booked_by_system: true,
   receipt_available: true,
+  edit_url: 'https://example.test/clients/101/edit/?delete_booking=1',
 };
 
 function mockAppointments(items: Appointment[]) {
@@ -48,6 +49,11 @@ describe('AppointmentsPage', () => {
     expect(
       await screen.findByRole('button', { name: /Download receipt for RAM BAHADUR/ }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Cancel appointment for/ })).toBeNull();
+    expect(screen.getByRole('link', { name: /Delete booking and edit RAM BAHADUR/ })).toHaveAttribute(
+      'href',
+      baseAppointment.edit_url,
+    );
   });
 
   it('never offers a receipt button on the cancelled tab', async () => {
@@ -57,6 +63,6 @@ describe('AppointmentsPage', () => {
     renderWithProviders(<AppointmentsPage />, { route: '/appointments?tab=cancelled' });
     expect(await screen.findByText('RAM BAHADUR')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Download receipt/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Cancel appointment for/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Delete booking and edit/ })).toBeNull();
   });
 });

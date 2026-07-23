@@ -48,4 +48,14 @@ describe('OfficialApi', () => {
 
     expect(fetchFn.mock.calls.filter(([url]) => url.endsWith('/get-free-access-token'))).toHaveLength(1);
   });
+
+  it('replaces the cached anonymous token on refresh', async () => {
+    let token = 0;
+    const fetchFn = vi.fn(async () => json({ token: `token-${++token}` }));
+    const api = new OfficialApi({ fetchFn });
+
+    await expect(api.getFreeToken()).resolves.toBe('token-1');
+    await api.refreshToken();
+    await expect(api.getFreeToken()).resolves.toBe('token-2');
+  });
 });

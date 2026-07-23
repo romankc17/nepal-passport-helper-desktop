@@ -99,6 +99,12 @@ export class OfficialApi {
     return this.tokenPromise;
   }
 
+  async refreshToken(): Promise<void> {
+    this.token = null;
+    this.tokenFetchedAt = 0;
+    await this.getFreeToken(true);
+  }
+
   private async fetchFreeToken(): Promise<string> {
     const url = `${this.origin}/interface-adapter/get-free-access-token`;
     let response: Response;

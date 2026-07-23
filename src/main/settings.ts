@@ -14,7 +14,7 @@ export interface StoredConfig {
   deviceId: string | null;
   sessionSnapshot: {
     user: { id: number; username: string; is_staff: boolean };
-    access: { mode: string; providers: { id: number; name: string }[] };
+    access: { mode: string; providers: { id: number; name: string }[]; booking_lab: boolean };
     defaults: { interval_seconds: number };
   } | null;
   watcherSnapshot: unknown | null;
