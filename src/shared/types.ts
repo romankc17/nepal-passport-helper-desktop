@@ -330,7 +330,7 @@ export interface WatcherCheckResult {
   checked: boolean;
   slots_found: number;
   booked: unknown[];
-  errors: { code?: string; message?: string }[];
+  errors: { code?: string; message?: string; client_id?: number }[];
 }
 
 export interface LocalRunStart {

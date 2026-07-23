@@ -15,7 +15,7 @@ import { cn } from '../lib/utils';
 const navItems = [
   { to: '/', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/watchers', label: 'Slot Watchers', icon: Radar },
-  { to: '/queue', label: 'Booking Session', icon: ListOrdered },
+  { to: '/queue', label: 'Booking Queue', icon: ListOrdered },
   { to: '/clients', label: 'Clients', icon: Users },
   { to: '/booking-lab', label: 'Booking Lab', icon: FlaskConical },
   { to: '/appointments', label: 'Appointments', icon: CalendarCheck },

@@ -169,8 +169,8 @@ export function QueuePage() {
         const failed = result.results.filter((entry) => entry.outcome === 'failed').length;
         toast(
           booked > 0
-            ? `Booked ${booked} · waiting this session ${queued} · failed ${failed}`
-            : 'No slot available — clients remain in this desktop session.',
+            ? `Booked ${booked} · queued ${queued} · failed ${failed}`
+            : 'No slot available — clients stay queued and watchers keep trying.',
           booked > 0 ? 'success' : 'error',
         );
       }
@@ -202,7 +202,7 @@ export function QueuePage() {
   return (
     <div>
       <PageHeader
-        title="Booking Session"
+        title="Booking Queue"
         description="Keep selected clients in this desktop session and book them when watchers find slots"
       />
 

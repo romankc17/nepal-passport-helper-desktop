@@ -575,7 +575,7 @@ export class MockServer {
         return this.ok(res, { watcher: this.watcherJson(watcher) });
       }
       if (sub === '/check/' && method === 'POST') {
-        return this.runCheck(watcher, res);
+        return this.runCheck(watcher, json, res);
       }
       if (sub === '/' && method === 'DELETE') {
         this.watchers.splice(this.watchers.indexOf(watcher), 1);
@@ -806,7 +806,11 @@ export class MockServer {
     return this.ok(res, payload);
   }
 
-  private runCheck(watcher: MockWatcher, res: http.ServerResponse): void {
+  private runCheck(
+    watcher: MockWatcher,
+    json: Record<string, unknown>,
+    res: http.ServerResponse,
+  ): void {
     if (this.scenario === 'captcha_421') {
       return this.fail(
         res,
@@ -816,6 +820,7 @@ export class MockServer {
         false,
       );
     }
+
     const slotCount = this.scenario === 'one_slot' ? 1 : this.scenario === 'multi_slot' ? 3 : 0;
     watcher.available_slots = Array.from({ length: slotCount }, (_, index) => ({
       date: '2026-08-01',
@@ -823,6 +828,36 @@ export class MockServer {
       end_time: `1${index}:30`,
     }));
     watcher.last_checked_at = new Date().toISOString();
+
+    const selectedClientIds = Array.isArray(json.client_ids)
+      ? (json.client_ids as number[])
+      : this.bookings
+          .filter((booking) => booking.watcher_id === watcher.id && booking.status === 'pending')
+          .map((booking) => booking.client_id);
+
+    const booked: Record<string, unknown>[] = [];
+    const errors: { code?: string; message?: string }[] = [];
+
+    for (const [index, clientId] of selectedClientIds.entries()) {
+      const client = this.clients.find((entry) => entry.id === clientId);
+      if (!client) continue;
+      let booking = this.bookings.find(
+        (entry) => entry.client_id === clientId && entry.watcher_id === watcher.id,
+      );
+      if (!booking) {
+        booking = this.newBooking(client, watcher.id, `check-${Date.now()}-${clientId}`);
+      }
+      const outcome = this.bookOutcome(booking, clientId, index);
+      if (outcome.outcome === 'booked') booked.push(outcome);
+      if (outcome.outcome === 'failed') {
+        errors.push({
+          client_id: clientId,
+          code: 'TIME_SLOT_NOT_AVAILABLE',
+          message: String(outcome.error),
+        });
+      }
+    }
+
     this.checkHistory.unshift({
       id: this.checkHistory.length + 1,
       started_at: watcher.last_checked_at,
@@ -830,8 +865,8 @@ export class MockServer {
       success: true,
       error: '',
       slots_found: slotCount,
-      request: {},
-      response: {},
+      request: { client_ids: selectedClientIds },
+      response: { booked: booked.length, queued: Math.max(0, selectedClientIds.length - booked.length - errors.length) },
     });
     this.addActivity('check', 'success', `${slotCount} slot(s) found`, {
       provider_id: watcher.provider_id,
@@ -841,8 +876,8 @@ export class MockServer {
       watcher: this.watcherJson(watcher),
       checked: true,
       slots_found: slotCount,
-      booked: [],
-      errors: [],
+      booked,
+      errors,
     });
   }
 

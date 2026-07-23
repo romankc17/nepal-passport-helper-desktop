@@ -129,7 +129,7 @@ export function OverviewPage() {
         />
         <StatCard
           icon={Inbox}
-          label="Session clients"
+          label="Queued clients"
           value={localQueueQuery.data?.items.length}
           loading={localQueueQuery.isPending}
           tone="bg-navy"

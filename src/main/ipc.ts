@@ -254,11 +254,43 @@ export function registerIpc(deps: IpcDeps): void {
   handle(channels.queueBookNow, async (raw: unknown) => {
     const input = validateBookNowInput(raw);
     const added = await addToLocalQueue(input);
-    const check = await deps.officialWorker.checkWatcher(
-      added.watcher.id, true, input.slots, input.client_ids,
-    );
+    const check = isE2E
+      ? await api.watchersCheck(added.watcher.id, {
+        force: true,
+        slots: input.slots,
+        client_ids: input.client_ids,
+      })
+      : await deps.officialWorker.checkWatcher(
+        added.watcher.id, true, input.slots, input.client_ids,
+      );
+
+    if (isE2E) {
+      const bookedByClient = new Map(
+        (check.booked as Array<{ client_id: number; booking_id?: number; appointment?: { date: string; start_time: string } }>).map((item) => [item.client_id, item]),
+      );
+      const failedByClient = new Map(
+        (check.errors as Array<{ client_id?: number; message?: string }>).map((item) => [item.client_id, item]),
+      );
+      for (const clientId of input.client_ids) {
+        const booking = bookedByClient.get(clientId);
+        if (booking?.appointment) {
+          deps.localQueue.update(clientId, {
+            status: 'booked',
+            official_application_id: '',
+            appointment: booking.appointment,
+            error: undefined,
+          });
+        } else {
+          const errorItem = failedByClient.get(clientId);
+          if (errorItem?.message) {
+            deps.localQueue.update(clientId, { status: 'failed', error: errorItem.message });
+          }
+        }
+      }
+    }
+
     const bookedByClient = new Map(
-      (check.booked as { client_id: number; booking_id: number }[]).map((item) => [item.client_id, item]),
+      (check.booked as Array<{ client_id: number; booking_id?: number }>).map((item) => [item.client_id, item]),
     );
     const results = input.client_ids.map((clientId) => {
       const item = deps.localQueue.get(clientId);

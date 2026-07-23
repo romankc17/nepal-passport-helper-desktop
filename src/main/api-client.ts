@@ -232,7 +232,7 @@ export class ApiClient {
 
   async watchersCheck(
     id: number,
-    opts: { force?: boolean; slots?: string[] },
+    opts: { force?: boolean; slots?: string[]; client_ids?: number[] },
   ): Promise<WatcherCheckResult> {
     return this.request<WatcherCheckResult>('POST', `/watchers/${id}/check/`, opts);
   }

@@ -357,7 +357,11 @@ export function validateWatcherSettingsPatch(raw: unknown): WatcherSettingsPatch
   };
 }
 
-export function validateWatcherCheckInput(raw: unknown): { force?: boolean; slots?: string[] } {
+export function validateWatcherCheckInput(raw: unknown): {
+  force?: boolean;
+  slots?: string[];
+  client_ids?: number[];
+} {
   if (raw === undefined || raw === null) return {};
   const input = asRecord(raw, 'watcherCheck');
   const slots = input.slots;
@@ -369,7 +373,22 @@ export function validateWatcherCheckInput(raw: unknown): { force?: boolean; slot
       }
     }
   }
-  return { force: asOptionalBool(input.force, 'force'), slots: slots as string[] | undefined };
+  const clientIds = input.client_ids;
+  if (clientIds !== undefined) {
+    if (!Array.isArray(clientIds) || clientIds.length > 50) {
+      fail('client_ids', 'an array of at most 50 client ids');
+    }
+    for (const clientId of clientIds) {
+      if (typeof clientId !== 'number' || !Number.isInteger(clientId)) {
+        fail('client_ids', 'entries must be integer client ids');
+      }
+    }
+  }
+  return {
+    force: asOptionalBool(input.force, 'force'),
+    slots: slots as string[] | undefined,
+    client_ids: clientIds as number[] | undefined,
+  };
 }
 
 const appointmentStatuses = ['booked', 'cancelled'] as const;
