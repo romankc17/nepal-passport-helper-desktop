@@ -93,4 +93,70 @@ describe('OfficialWorker', () => {
     expect(api.watcherLocalStart).toHaveBeenCalledWith(12, true);
     expect(api.labBookLocalComplete).toHaveBeenCalledWith('lab-1');
   });
+
+  it('makes fresh clients ready by reserving and submitting an application id per job', async () => {
+    const api = {
+      clientsSubmitPlan: vi.fn().mockResolvedValue({
+        jobs: [{
+          client_id: 1, name: 'Fresh Client',
+          application_payload: { applicationMetaDataDTO: { applicationID: null } },
+        }],
+        already_ready: [{ client_id: 2, name: 'Already Ready', official_application_id: 'APP-2' }],
+        errors: [{ client_id: 3, name: 'Missing Docs', error: 'Missing required documents: X.' }],
+      }),
+      clientsSubmitComplete: vi.fn().mockResolvedValue({
+        submitted: [{ client_id: 1, name: 'Fresh Client', official_application_id: 'APP-1' }],
+        failed: [],
+      }),
+    };
+    const official = {
+      reserveApplicationId: vi.fn().mockResolvedValue('APP-1'),
+      submitApplication: vi.fn().mockResolvedValue('JVBERi0='),
+    };
+    const worker = new OfficialWorker(api as never, official as never);
+
+    const result = await worker.submitClients({ client_ids: [1, 2, 3] });
+
+    expect(official.reserveApplicationId).toHaveBeenCalledOnce();
+    expect(official.submitApplication).toHaveBeenCalledWith({
+      applicationMetaDataDTO: { applicationID: 'APP-1' },
+    });
+    expect(api.clientsSubmitComplete).toHaveBeenCalledWith([
+      { client_id: 1, application_id: 'APP-1', receipt: 'JVBERi0=' },
+    ]);
+    expect(result).toEqual({
+      submitted: [
+        { client_id: 2, name: 'Already Ready', official_application_id: 'APP-2' },
+        { client_id: 1, name: 'Fresh Client', official_application_id: 'APP-1' },
+      ],
+      failed: [{ client_id: 3, name: 'Missing Docs', error: 'Missing required documents: X.' }],
+    });
+  });
+
+  it('reports a failed submission without aborting other jobs', async () => {
+    const api = {
+      clientsSubmitPlan: vi.fn().mockResolvedValue({
+        jobs: [{ client_id: 1, name: 'Fails', application_payload: {} }],
+        already_ready: [],
+        errors: [],
+      }),
+      clientsSubmitComplete: vi.fn().mockResolvedValue({
+        submitted: [],
+        failed: [{ client_id: 1, name: 'Fails', error: 'Official submission failed' }],
+      }),
+    };
+    const official = {
+      reserveApplicationId: vi.fn().mockRejectedValue(new Error('Official submission failed')),
+      submitApplication: vi.fn(),
+    };
+    const worker = new OfficialWorker(api as never, official as never);
+
+    const result = await worker.submitClients({ client_ids: [1] });
+
+    expect(official.submitApplication).not.toHaveBeenCalled();
+    expect(api.clientsSubmitComplete).toHaveBeenCalledWith([
+      { client_id: 1, application_id: '', error: 'Official submission failed' },
+    ]);
+    expect(result.failed).toEqual([{ client_id: 1, name: 'Fails', error: 'Official submission failed' }]);
+  });
 });
