@@ -170,6 +170,28 @@ describe('ImportOfficialDialog', () => {
     }
   });
 
+  it('carries supportingDocumentsData to importConfirm without leaking it into importPreview', async () => {
+    const documents = [{ documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] }];
+    const desktop = installDesktopMock();
+    desktop.officialImport.list = vi.fn().mockResolvedValue([APPLICATION]);
+    desktop.officialImport.get = vi
+      .fn()
+      .mockResolvedValue({ ...OFFICIAL_DETAIL, supportingDocumentsData: documents });
+    desktop.clients.importPreview = vi.fn().mockResolvedValue(PREVIEW);
+    desktop.clients.importConfirm = vi.fn().mockResolvedValue(CONFIRM_RESULT);
+    renderDialog();
+
+    await reachReviewStep();
+    await userEvent.click(screen.getByTestId('import-confirm-create'));
+    await screen.findByText('Client created as Fresh');
+
+    const previewInput = (desktop.clients.importPreview as unknown as Mock).mock.calls[0][0];
+    expect(previewInput.application.supportingDocumentsData).toBeUndefined();
+
+    const confirmInput = (desktop.clients.importConfirm as unknown as Mock).mock.calls[0][0];
+    expect(confirmInput.supporting_documents).toEqual(documents);
+  });
+
   it('SESSION_EXPIRED on list shows the session message and returns to sign-in', async () => {
     const desktop = installDesktopMock();
     desktop.officialImport.list = vi

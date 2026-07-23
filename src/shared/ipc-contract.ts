@@ -7,6 +7,7 @@ import type {
   AppointmentListQuery,
   BookNowInput,
   ClientListQuery,
+  ClientSubmitInput,
   LabBookInput,
   LabGenerateInput,
   LabListQuery,
@@ -15,6 +16,7 @@ import type {
   PreferencesPatch,
   FavoriteLocation,
   QueueAddInput,
+  SupportingDocument,
   WatcherCreateInput,
   WatcherMode,
   WatcherSettingsPatch,
@@ -30,6 +32,7 @@ export const channels = {
   clientsList: 'clients:list',
   clientsGet: 'clients:get',
   clientsReadyByLocation: 'clients:ready-by-location',
+  clientsSubmit: 'clients:submit',
   queueAdd: 'queue:add',
   queueGet: 'queue:get',
   queueRemove: 'queue:remove',
@@ -496,6 +499,11 @@ export function validateOptionalIdArray(raw: unknown, name: string): number[] | 
   return asIdArray(raw, name);
 }
 
+export function validateClientSubmitInput(raw: unknown): ClientSubmitInput {
+  const input = asRecord(raw, 'clientSubmit');
+  return { client_ids: asIdArray(input.client_ids, 'client_ids') };
+}
+
 // --- Booking Lab validators ---------------------------------------------------
 
 export function validateLabListQuery(raw: unknown): LabListQuery {
@@ -619,6 +627,49 @@ export interface ImportConfirmInput {
   fields: Record<string, unknown>;
   allow_duplicate: boolean;
   idempotency_key: string;
+  supporting_documents: SupportingDocument[];
+}
+
+// Supporting-document images run through their own validator rather than
+// `assertSanitizedPayload`: that helper caps strings at 20000 chars and the
+// whole payload at 256KB, both far too small for real base64 scan data.
+const MAX_SUPPORTING_DOCUMENTS = 30;
+const MAX_IMAGES_PER_DOCUMENT = 5;
+const MAX_IMAGE_BASE64_CHARS = 15_000_000; // ~11MB decoded; generous for scanned photos
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function asSupportingDocuments(raw: unknown): SupportingDocument[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) fail('supporting_documents', 'an array');
+  if (raw.length > MAX_SUPPORTING_DOCUMENTS) {
+    fail('supporting_documents', `at most ${MAX_SUPPORTING_DOCUMENTS} documents`);
+  }
+  return raw.map((entry, index) => {
+    const item = asRecord(entry, `supporting_documents[${index}]`);
+    const documentType = asString(item.documentType, `supporting_documents[${index}].documentType`, 100);
+    if (FORBIDDEN_KEY_PATTERN.test(documentType)) {
+      fail(`supporting_documents[${index}].documentType`, 'a document type, not authentication material');
+    }
+    const rawImages = item.documents;
+    if (!Array.isArray(rawImages)) {
+      fail(`supporting_documents[${index}].documents`, 'an array of base64-encoded images');
+    }
+    if (rawImages.length > MAX_IMAGES_PER_DOCUMENT) {
+      fail(`supporting_documents[${index}].documents`, `at most ${MAX_IMAGES_PER_DOCUMENT} images`);
+    }
+    const documents = rawImages.map((image, imageIndex) => {
+      const value = asString(
+        image,
+        `supporting_documents[${index}].documents[${imageIndex}]`,
+        MAX_IMAGE_BASE64_CHARS,
+      );
+      if (!BASE64_PATTERN.test(value)) {
+        fail(`supporting_documents[${index}].documents[${imageIndex}]`, 'base64-encoded image data');
+      }
+      return value;
+    });
+    return { documentType, documents };
+  });
 }
 
 export function validateImportConfirmInput(raw: unknown): ImportConfirmInput {
@@ -629,5 +680,6 @@ export function validateImportConfirmInput(raw: unknown): ImportConfirmInput {
     fields,
     allow_duplicate: input.allow_duplicate === undefined ? false : asBool(input.allow_duplicate, 'allow_duplicate'),
     idempotency_key: asString(input.idempotency_key, 'idempotency_key', 100),
+    supporting_documents: asSupportingDocuments(input.supporting_documents),
   };
 }

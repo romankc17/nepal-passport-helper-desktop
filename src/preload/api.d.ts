@@ -11,6 +11,8 @@ import type {
   ClientDetail,
   ClientListQuery,
   ClientListResult,
+  ClientSubmitInput,
+  ClientSubmitResult,
   ClientSummary,
   ImportConfirmResult,
   ImportPreviewResult,
@@ -33,6 +35,7 @@ import type {
   LocationItem,
   LocationKind,
   MeResult,
+  SupportingDocument,
   Overview,
   Paged,
   Preferences,
@@ -87,11 +90,13 @@ export interface DesktopApi {
     list(query?: ClientListQuery): Promise<ClientListResult>;
     get(id: number): Promise<ClientDetail>;
     readyByLocation(): Promise<ReadyByLocationGroup[]>;
+    submit(input: ClientSubmitInput): Promise<ClientSubmitResult>;
     importPreview(input: { application: Record<string, unknown> }): Promise<ImportPreviewResult>;
     importConfirm(input: {
       fields: Record<string, unknown>;
       allow_duplicate?: boolean;
       idempotency_key: string;
+      supporting_documents?: SupportingDocument[];
     }): Promise<ImportConfirmResult>;
   };
   officialImport: {

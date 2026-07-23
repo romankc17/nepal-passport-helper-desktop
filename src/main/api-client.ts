@@ -9,6 +9,10 @@ import type {
   ClientDetail,
   ClientListQuery,
   ClientListResult,
+  ClientSubmitFailure,
+  ClientSubmitInput,
+  ClientSubmitOutcome,
+  ClientSubmitResult,
   ImportConfirmResult,
   ImportPreviewResult,
   LabBookInput,
@@ -179,6 +183,20 @@ export class ApiClient {
     return data.locations;
   }
 
+  async clientsSubmitPlan(input: ClientSubmitInput): Promise<{
+    jobs: { client_id: number; name: string; application_payload: Record<string, unknown> }[];
+    already_ready: ClientSubmitOutcome[];
+    errors: ClientSubmitFailure[];
+  }> {
+    return this.request('POST', '/clients/submit/plan/', input);
+  }
+
+  async clientsSubmitComplete(
+    results: { client_id: number; application_id: string; receipt?: string; error?: string }[],
+  ): Promise<ClientSubmitResult> {
+    return this.request('POST', '/clients/submit/complete/', { results });
+  }
+
   async clientsImportPreview(input: ImportPreviewInput): Promise<ImportPreviewResult> {
     return this.request<ImportPreviewResult>('POST', '/clients/import-official/preview/', {
       application: input.application,
@@ -192,6 +210,7 @@ export class ApiClient {
       fields: input.fields,
       allow_duplicate: input.allow_duplicate,
       idempotency_key: input.idempotency_key,
+      supporting_documents: input.supporting_documents,
     });
   }
 

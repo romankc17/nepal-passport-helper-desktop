@@ -1,4 +1,6 @@
 import type {
+  ClientSubmitInput,
+  ClientSubmitResult,
   LocalBookingJob,
   LocalBookingResult,
   ReconcileResult,
@@ -148,6 +150,35 @@ export class OfficialWorker {
     }));
     await this.api.labSubmitLocalComplete(plan.batch_id, results);
     return { batch_id: plan.batch_id };
+  }
+
+  /** "Make Ready": submit fresh/cancelled real clients to the official
+   * pre-enrollment form, independent of booking. Clients that already have
+   * an official_application_id are reported back as submitted immediately
+   * (see clients_submit_plan's already_ready). */
+  async submitClients(input: ClientSubmitInput): Promise<ClientSubmitResult> {
+    const plan = await this.api.clientsSubmitPlan(input);
+    const jobResults = await Promise.all(plan.jobs.map(async (job) => {
+      try {
+        const applicationId = await this.official.reserveApplicationId();
+        const payload = structuredClone(job.application_payload);
+        setApplicationId(payload, applicationId);
+        const receipt = await this.official.submitApplication(payload);
+        return { client_id: job.client_id, application_id: applicationId, receipt };
+      } catch (error) {
+        return {
+          client_id: job.client_id, application_id: '',
+          error: error instanceof Error ? error.message : 'Official submission failed',
+        };
+      }
+    }));
+    const completed = jobResults.length
+      ? await this.api.clientsSubmitComplete(jobResults)
+      : { submitted: [], failed: [] };
+    return {
+      submitted: [...plan.already_ready, ...completed.submitted],
+      failed: [...plan.errors, ...completed.failed],
+    };
   }
 
   async bookLab(input: LabBookInput): Promise<{ batch_id: string }> {

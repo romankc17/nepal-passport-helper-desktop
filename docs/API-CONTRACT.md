@@ -99,11 +99,17 @@ Unknown official application type → 400 `UNSUPPORTED_APPLICATION_TYPE`.
 
 ### POST `clients/import-official/confirm/` (auth)
 Body: `{ fields: {...reviewed mapped fields...}, allow_duplicate: bool,
-idempotency_key }` (the `Idempotency-Key` header is also accepted; repeating
-with the same key returns the original response). Keys outside the client form
-are dropped; auth/session-shaped keys → 400 `VALIDATION_ERROR`.
-Creates a **Fresh** client owned by the requesting user — no booking, receipt,
-or document rows are created, and the source WPT ID is never stored.
+idempotency_key, supporting_documents?: [{documentType, documents: [base64...]}] }`
+(the `Idempotency-Key` header is also accepted; repeating with the same key
+returns the original response). Keys outside the client form are dropped;
+auth/session-shaped keys → 400 `VALIDATION_ERROR`.
+Creates a **Fresh** client owned by the requesting user — no booking or
+receipt rows are created, and the source WPT ID is never stored.
+`supporting_documents` (optional, up to 30 entries) carries scans collected
+alongside the official application — one entry per document type, each with
+up to 5 base64-encoded images (front/back/third/fourth/fifth). Unknown
+document types or entries with no images are silently skipped; everything
+else becomes an `ApplicantDocument` row on the new client.
 → `{ client: ClientSummary, edit_url }` (`edit_url` is the web-portal edit path).
 409 `DUPLICATE_CLIENT` when a client with the same citizenship number + DOB
 exists and `allow_duplicate` is false. 403 `PERMISSION_DENIED` for a

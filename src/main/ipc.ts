@@ -16,6 +16,7 @@ import {
   validateAppointmentListQuery,
   validateBookNowInput,
   validateClientListQuery,
+  validateClientSubmitInput,
   validateLabBookInput,
   validateLabGenerateInput,
   validateLabJobBatchId,
@@ -179,6 +180,9 @@ export function registerIpc(deps: IpcDeps): void {
   handle(channels.clientsList, (raw: unknown) => api.clientsList(validateClientListQuery(raw)));
   handle(channels.clientsGet, (raw: unknown) => api.clientsGet(asId(raw)));
   handle(channels.clientsReadyByLocation, () => api.clientsReadyByLocation());
+  handle(channels.clientsSubmit, (raw: unknown) =>
+    deps.officialWorker.submitClients(validateClientSubmitInput(raw)),
+  );
   handle(channels.clientsImportPreview, (raw: unknown) =>
     api.clientsImportPreview(validateImportPreviewInput(raw)),
   );

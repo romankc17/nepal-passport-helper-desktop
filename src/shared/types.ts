@@ -170,6 +170,30 @@ export interface ReadyByLocationGroup {
   clients: ClientSummary[];
 }
 
+// Make Ready (submit a fresh/cancelled client to the official pre-enrollment
+// form to obtain its official_application_id, independent of booking).
+
+export interface ClientSubmitInput {
+  client_ids: number[];
+}
+
+export interface ClientSubmitOutcome {
+  client_id: number;
+  name: string;
+  official_application_id: string;
+}
+
+export interface ClientSubmitFailure {
+  client_id: number;
+  name: string;
+  error: string;
+}
+
+export interface ClientSubmitResult {
+  submitted: ClientSubmitOutcome[];
+  failed: ClientSubmitFailure[];
+}
+
 // Import from official portal
 
 // Sanitized summary of an application listed on the official portal account.
@@ -190,6 +214,15 @@ export interface ImportWarning {
 export interface ImportDuplicate {
   client_id: number;
   full_name: string;
+}
+
+// A supporting document scan (citizenship certificate, national eID, ...)
+// captured alongside an official application. Carried separately from the
+// sanitized application fields since base64 image data is far larger than
+// the generic IPC payload cap.
+export interface SupportingDocument {
+  documentType: string;
+  documents: string[];
 }
 
 // Mapped client fields are plain string/string-or-number key-values matching

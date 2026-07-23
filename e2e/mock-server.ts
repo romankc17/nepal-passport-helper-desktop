@@ -836,7 +836,7 @@ export class MockServer {
           .map((booking) => booking.client_id);
 
     const booked: Record<string, unknown>[] = [];
-    const errors: { code?: string; message?: string }[] = [];
+    const errors: { client_id?: number; code?: string; message?: string }[] = [];
 
     for (const [index, clientId] of selectedClientIds.entries()) {
       const client = this.clients.find((entry) => entry.id === clientId);

@@ -286,12 +286,43 @@ describe('validateImportPreviewInput', () => {
 describe('validateImportConfirmInput', () => {
   const base = { fields: { first_name: 'Ram' }, idempotency_key: 'key-1' };
 
-  it('accepts clean payloads and defaults allow_duplicate to false', () => {
+  it('accepts clean payloads and defaults allow_duplicate/supporting_documents', () => {
     const input = validateImportConfirmInput(base);
     expect(input.allow_duplicate).toBe(false);
+    expect(input.supporting_documents).toEqual([]);
     expect(
       validateImportConfirmInput({ ...base, allow_duplicate: true }).allow_duplicate,
     ).toBe(true);
+  });
+
+  it('validates supporting_documents shape and caps', () => {
+    const documents = [
+      { documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] },
+    ];
+    expect(
+      validateImportConfirmInput({ ...base, supporting_documents: documents }).supporting_documents,
+    ).toEqual(documents);
+    expect(() =>
+      validateImportConfirmInput({ ...base, supporting_documents: 'nope' }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateImportConfirmInput({
+        ...base,
+        supporting_documents: [{ documentType: 'jwtSecret', documents: [] }],
+      }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateImportConfirmInput({
+        ...base,
+        supporting_documents: [{ documentType: 'nationalEID', documents: ['not base64!'] }],
+      }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateImportConfirmInput({
+        ...base,
+        supporting_documents: Array.from({ length: 31 }, () => documents[0]),
+      }),
+    ).toThrow(ValidationError);
   });
 
   it('rejects token-ish keys, oversized values and non-objects', () => {
