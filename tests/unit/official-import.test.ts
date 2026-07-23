@@ -117,7 +117,6 @@ import {
   OfficialImportSession,
   buildPageFetchScript,
   extractApplicationList,
-  extractSupportingDocuments,
   getOfficialImportSession,
   pageResultError,
   sanitizeOfficialJson,
@@ -603,53 +602,6 @@ describe('sanitizeOfficialJson', () => {
   });
 });
 
-describe('extractSupportingDocuments', () => {
-  it('keeps only well-shaped entries with at least one scanned image', () => {
-    const documents = extractSupportingDocuments({
-      supportingDocumentsData: [
-        { documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] },
-        { documentType: 'academicCertificate', documents: [] }, // nothing scanned
-        { documentType: '', documents: ['aGVsbG8='] }, // no type
-        { documentType: 'nationalEID' }, // missing documents array
-        'not-an-object',
-      ],
-    });
-    expect(documents).toEqual([
-      { documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] },
-    ]);
-  });
-
-  it('drops non-base64 strings and caps images per document at 5', () => {
-    const images = ['aGVsbG8=', 'not base64!', 'd29ybGQ=', 'aGVsbG8=', 'd29ybGQ=', 'aGVsbG8=', 'd29ybGQ='];
-    const documents = extractSupportingDocuments({
-      supportingDocumentsData: [{ documentType: 'nationalEID', documents: images }],
-    });
-    expect(documents).toHaveLength(1);
-    expect(documents[0].documents).toHaveLength(5);
-    expect(documents[0].documents).not.toContain('not base64!');
-  });
-
-  it('returns an empty array when the field is absent or malformed', () => {
-    expect(extractSupportingDocuments({})).toEqual([]);
-    expect(extractSupportingDocuments({ supportingDocumentsData: 'nope' })).toEqual([]);
-    expect(extractSupportingDocuments(null)).toEqual([]);
-  });
-
-  it('finds supportingDocumentsData nested under an arbitrary wrapper, not just top-level', () => {
-    const documents = extractSupportingDocuments({
-      applicationId: 'WPT100000500',
-      data: {
-        applicantsDTO: {
-          supportingDocumentsData: [
-            { documentType: 'citizenshipCertificate', documents: ['aGVsbG8='] },
-          ],
-        },
-      },
-    });
-    expect(documents).toEqual([{ documentType: 'citizenshipCertificate', documents: ['aGVsbG8='] }]);
-  });
-});
-
 // --- List mapping ------------------------------------------------------------
 
 describe('listApplications', () => {
@@ -830,30 +782,10 @@ describe('getApplication', () => {
       givenName: 'Ram',
       surname: 'Sharma',
       documentSubtype: 'ORDINARY',
-      supportingDocumentsData: [],
     });
     const script = lastPortalWindow().webContents.executeJavaScript.mock.calls[0][0] as string;
     expect(script).toContain('/process-state-controller/public/applications/WPT100000500');
     expect(script).toContain('"GET"');
-  });
-
-  it('carries supportingDocumentsData through untouched by the generic sanitizer', async () => {
-    const { session } = makeSession();
-    await session.open();
-    canned({
-      status: 200,
-      contentType: 'application/json',
-      body: {
-        applicationId: 'WPT100000500',
-        supportingDocumentsData: [
-          { documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] },
-        ],
-      },
-    });
-    const detail = await session.getApplication('WPT100000500');
-    expect(detail.supportingDocumentsData).toEqual([
-      { documentType: 'citizenshipCertificate', documents: ['aGVsbG8=', 'd29ybGQ='] },
-    ]);
   });
 });
 

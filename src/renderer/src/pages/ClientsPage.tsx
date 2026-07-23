@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Import, Send, Users, XCircle } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ArrowDown, ArrowUp, ArrowUpDown, CheckCircle2, Import, Users, XCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ClientSummary } from '../../../shared/types';
@@ -7,7 +7,6 @@ import { api, queryKeys } from '../api';
 import { Badge, type BadgeTone } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
-import { Checkbox } from '../components/Checkbox';
 import { Drawer } from '../components/Drawer';
 import { EmptyState } from '../components/EmptyState';
 import { ImportOfficialDialog } from '../components/import-official/ImportOfficialDialog';
@@ -62,12 +61,6 @@ const sortValue = (client: ClientSummary, key: SortKey): string | number => {
   }
 };
 
-// Docs complete and not yet submitted to the official portal — the
-// "not_permitted"/"booked"/"cancelled" buckets never reach desktop_status
-// 'ready' unless an application id is already set, so this alone is enough.
-const canMakeReady = (client: ClientSummary): boolean =>
-  client.desktop_status === 'ready' && !client.official_application_id;
-
 export function ClientsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -76,8 +69,6 @@ export function ClientsPage() {
   const [queueing, setQueueing] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [sort, setSort] = useState<SortState | null>(null);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [makingReady, setMakingReady] = useState<Set<number>>(new Set());
 
   const search = searchParams.get('q') ?? '';
   const tab = tabs.some(({ value }) => value === searchParams.get('tab'))
@@ -151,22 +142,6 @@ export function ClientsPage() {
     });
   }, [visibleClients, sort]);
 
-  const eligibleIds = sortedClients.filter(canMakeReady).map((client) => client.id);
-  const selectedEligibleIds = eligibleIds.filter((id) => selected.has(id));
-
-  const toggleSelect = (clientId: number, checked: boolean) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (checked) next.add(clientId);
-      else next.delete(clientId);
-      return next;
-    });
-  };
-
-  const toggleSelectAll = (checked: boolean) => {
-    setSelected(checked ? new Set(sortedClients.map((client) => client.id)) : new Set());
-  };
-
   const toggleSort = (key: SortKey) => {
     setSort((current) => {
       if (!current || current.key !== key) return { key, direction: 'asc' };
@@ -219,49 +194,6 @@ export function ClientsPage() {
       toast(describeError(error, 'Could not add client to this session'), 'error');
     } finally {
       setQueueing(false);
-    }
-  };
-
-  const submitMutation = useMutation({
-    mutationFn: (clientIds: number[]) => api.clients.submit({ client_ids: clientIds }),
-  });
-
-  const makeReady = async (clientIds: number[]) => {
-    const ids = clientIds.filter((id) => !makingReady.has(id));
-    if (ids.length === 0) return;
-    setMakingReady((current) => new Set([...current, ...ids]));
-    try {
-      const result = await submitMutation.mutateAsync(ids);
-      if (result.submitted.length > 0) {
-        toast(
-          `Made ready: ${result.submitted.length} client${result.submitted.length === 1 ? '' : 's'}`,
-        );
-      }
-      if (result.failed.length > 0) {
-        toast(
-          result.failed.length === 1
-            ? result.failed[0].error
-            : `${result.failed.length} clients could not be made ready`,
-          'error',
-        );
-      }
-      setSelected((current) => {
-        const next = new Set(current);
-        ids.forEach((id) => next.delete(id));
-        return next;
-      });
-      await queryClient.invalidateQueries({ queryKey: ['clients'] });
-      if (selectedClientId !== null && ids.includes(selectedClientId)) {
-        await queryClient.invalidateQueries({ queryKey: queryKeys.client(selectedClientId) });
-      }
-    } catch (error) {
-      toast(describeError(error, 'Could not make clients ready'), 'error');
-    } finally {
-      setMakingReady((current) => {
-        const next = new Set(current);
-        ids.forEach((id) => next.delete(id));
-        return next;
-      });
     }
   };
 
@@ -392,35 +324,15 @@ export function ClientsPage() {
           />
         ) : (
           <>
-            <div className="flex items-center gap-3 px-5 py-3">
-              <Checkbox
-                ariaLabel="Select all clients on this page"
-                checked={selected.size > 0 && sortedClients.every((client) => selected.has(client.id))}
-                indeterminate={selected.size > 0 && !sortedClients.every((client) => selected.has(client.id))}
-                onCheckedChange={toggleSelectAll}
-              />
-              <span className="text-xs text-slate-500">{selected.size} selected</span>
-              <Button
-                size="sm"
-                disabled={selectedEligibleIds.length === 0 || makingReady.size > 0}
-                loading={makingReady.size > 0}
-                onClick={() => void makeReady(selectedEligibleIds)}
-              >
-                <Send className="h-3.5 w-3.5" aria-hidden="true" />
-                Make ready ({selectedEligibleIds.length})
-              </Button>
-            </div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                  <th className="w-10 px-5 py-3" />
-                  <th className="px-3 py-3">{renderHeader('name', 'Name')}</th>
+                  <th className="px-5 py-3">{renderHeader('name', 'Name')}</th>
                   <th className="px-3 py-3">{renderHeader('type', 'Type')}</th>
                   <th className="px-3 py-3">{renderHeader('office', 'Office')}</th>
                   <th className="px-3 py-3">{renderHeader('applicationId', 'Application ID')}</th>
                   <th className="px-3 py-3">{renderHeader('status', 'Status')}</th>
                   <th className="px-3 py-3">{renderHeader('added', 'Added')}</th>
-                  <th className="px-3 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -435,14 +347,7 @@ export function ClientsPage() {
                     aria-label={`Open details for ${client.full_name}`}
                     className="cursor-pointer border-b border-slate-50 transition-colors hover:bg-blue-50/40 focus:outline-none focus-visible:bg-blue-50"
                   >
-                    <td className="px-5 py-3" onClick={(event) => event.stopPropagation()}>
-                      <Checkbox
-                        ariaLabel={`Select ${client.full_name}`}
-                        checked={selected.has(client.id)}
-                        onCheckedChange={(checked) => toggleSelect(client.id, checked)}
-                      />
-                    </td>
-                    <td className="px-3 py-3 font-medium text-slate-800">{client.full_name}</td>
+                    <td className="px-5 py-3 font-medium text-slate-800">{client.full_name}</td>
                     <td className="px-3 py-3 text-slate-600">{client.application_type}</td>
                     <td className="px-3 py-3 text-slate-600">
                       {client.provider_name}
@@ -463,19 +368,6 @@ export function ClientsPage() {
                     </td>
                     <td className="px-3 py-3 text-xs text-slate-500">
                       {formatDateTime(client.created_at)}
-                    </td>
-                    <td className="px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                      {canMakeReady(client) && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          disabled={makingReady.has(client.id)}
-                          loading={makingReady.has(client.id)}
-                          onClick={() => void makeReady([client.id])}
-                        >
-                          Make ready
-                        </Button>
-                      )}
                     </td>
                   </tr>
                 ))}
@@ -595,19 +487,7 @@ export function ClientsPage() {
               </section>
             )}
 
-            <section className="flex flex-col gap-2">
-              {canMakeReady(detail) && (
-                <Button
-                  variant="secondary"
-                  disabled={makingReady.has(detail.id)}
-                  loading={makingReady.has(detail.id)}
-                  onClick={() => void makeReady([detail.id])}
-                  className="w-full"
-                >
-                  <Send className="h-4 w-4" aria-hidden="true" />
-                  Make ready
-                </Button>
-              )}
+            <section>
               {detail.can_book ? (
                 <Button
                   onClick={() => void queueForBooking(detail)}

@@ -6,7 +6,6 @@ import type {
   AppointmentListQuery,
   BookNowInput,
   ClientListQuery,
-  ClientSubmitInput,
   LabBookInput,
   LabGenerateInput,
   LabListQuery,
@@ -14,7 +13,6 @@ import type {
   LocationKind,
   PreferencesPatch,
   QueueAddInput,
-  SupportingDocument,
   WatcherCreateInput,
   WatcherSettingsPatch,
 } from '../shared/types';
@@ -75,14 +73,12 @@ const desktopApi = {
     list: (query?: ClientListQuery) => call(channels.clientsList, query),
     get: (id: number) => call(channels.clientsGet, id),
     readyByLocation: () => call(channels.clientsReadyByLocation),
-    submit: (input: ClientSubmitInput) => call(channels.clientsSubmit, input),
     importPreview: (input: { application: Record<string, unknown> }) =>
       call(channels.clientsImportPreview, input),
     importConfirm: (input: {
       fields: Record<string, unknown>;
       allow_duplicate?: boolean;
       idempotency_key: string;
-      supporting_documents?: SupportingDocument[];
     }) => call(channels.clientsImportConfirm, input),
   },
   officialImport: {

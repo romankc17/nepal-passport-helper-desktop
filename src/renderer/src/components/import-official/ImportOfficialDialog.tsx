@@ -5,7 +5,6 @@ import type {
   ImportConfirmResult,
   ImportPreviewResult,
   OfficialApplicationSummary,
-  SupportingDocument,
 } from '../../../../shared/types';
 import { describeError, errorCode } from '../../lib/errors';
 import { Button } from '../Button';
@@ -105,7 +104,6 @@ export function ImportOfficialDialog({ open, onOpenChange, onCreated }: ImportOf
 
   const [preview, setPreview] = useState<ImportPreviewResult | null>(null);
   const [fields, setFields] = useState<ImportFields>({});
-  const [supportingDocuments, setSupportingDocuments] = useState<SupportingDocument[]>([]);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [duplicateRequired, setDuplicateRequired] = useState(false);
   const [allowDuplicate, setAllowDuplicate] = useState(false);
@@ -131,7 +129,6 @@ export function ImportOfficialDialog({ open, onOpenChange, onCreated }: ImportOf
     setManualError(null);
     setPreview(null);
     setFields({});
-    setSupportingDocuments([]);
     setFieldErrors({});
     setDuplicateRequired(false);
     setAllowDuplicate(false);
@@ -261,17 +258,13 @@ export function ImportOfficialDialog({ open, onOpenChange, onCreated }: ImportOf
     setBusy('Loading application details…');
     setErrorState(null);
     try {
-      const { supportingDocumentsData, ...application } =
-        await window.desktop.officialImport.get(applicationId);
+      const application = await window.desktop.officialImport.get(applicationId);
       if (run !== runRef.current) return;
       setBusy('Mapping fields…');
-      // Documents travel separately (to importConfirm) — the preview payload
-      // stays small since it only maps application fields.
       const previewResult = await window.desktop.clients.importPreview({ application });
       if (run !== runRef.current) return;
       setPreview(previewResult);
       setFields({ ...previewResult.fields });
-      setSupportingDocuments(Array.isArray(supportingDocumentsData) ? supportingDocumentsData : []);
       setFieldErrors({});
       setDuplicateRequired(previewResult.duplicate !== null);
       setAllowDuplicate(false);
@@ -294,7 +287,6 @@ export function ImportOfficialDialog({ open, onOpenChange, onCreated }: ImportOf
         fields,
         allow_duplicate: allowDuplicate,
         idempotency_key: window.crypto.randomUUID(),
-        supporting_documents: supportingDocuments,
       });
       if (run !== runRef.current) return;
       setResult(confirmResult);

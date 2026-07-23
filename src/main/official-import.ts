@@ -7,11 +7,7 @@
 import { BrowserWindow, app, shell } from 'electron';
 import type { Session } from 'electron';
 import { ValidationError } from '../shared/ipc-contract';
-import type {
-  OfficialApplicationSummary,
-  OfficialImportStateEvent,
-  SupportingDocument,
-} from '../shared/types';
+import type { OfficialApplicationSummary, OfficialImportStateEvent } from '../shared/types';
 import { ApiError } from './api-client';
 import { isE2E } from './e2e';
 
@@ -252,67 +248,6 @@ function sanitizeNode(node: unknown, depth: number): unknown {
     return out;
   }
   return undefined;
-}
-
-// --- Supporting documents ---------------------------------------------------
-
-// The generic sanitizer above deliberately guts anything matching
-// `document|photo|image` and caps strings at 4000 chars — right, for noise,
-// but too small for real base64 scan data. Supporting documents get their own
-// narrow, separately-capped path instead of loosening the generic blocklist:
-// pulled straight from the raw (pre-sanitizer) body, validated as base64, and
-// reattached to the sanitized result under the same key.
-const MAX_DOCUMENT_ENTRIES = 30;
-const MAX_IMAGES_PER_DOCUMENT = 5;
-const MAX_IMAGE_BASE64_CHARS = 15_000_000; // ~11MB decoded; generous for scanned photos
-const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
-const MAX_SEARCH_DEPTH = 8; // matches the generic sanitizer's own depth cap
-
-// The portal's detail response wraps its DTOs inconsistently (see PERSON_PATH
-// above) and `supportingDocumentsData` isn't reliably at the top level — so
-// this searches for the key instead of assuming one fixed path.
-function findSupportingDocumentsData(node: unknown, depth: number): unknown {
-  if (depth > MAX_SEARCH_DEPTH || typeof node !== 'object' || node === null) return undefined;
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const found = findSupportingDocumentsData(item, depth + 1);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  const record = node as Record<string, unknown>;
-  if ('supportingDocumentsData' in record) return record.supportingDocumentsData;
-  for (const value of Object.values(record)) {
-    const found = findSupportingDocumentsData(value, depth + 1);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-}
-
-export function extractSupportingDocuments(body: unknown): SupportingDocument[] {
-  const raw = findSupportingDocumentsData(body, 0);
-  if (!Array.isArray(raw)) return [];
-  const out: SupportingDocument[] = [];
-  for (const entry of raw.slice(0, MAX_DOCUMENT_ENTRIES)) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const record = entry as Record<string, unknown>;
-    const documentType = record.documentType;
-    if (typeof documentType !== 'string' || !documentType || documentType.length > 100) continue;
-    const rawImages = record.documents;
-    if (!Array.isArray(rawImages)) continue;
-    const documents = rawImages
-      .filter(
-        (image): image is string =>
-          typeof image === 'string' &&
-          image.length > 0 &&
-          image.length <= MAX_IMAGE_BASE64_CHARS &&
-          BASE64_PATTERN.test(image),
-      )
-      .slice(0, MAX_IMAGES_PER_DOCUMENT);
-    // Skip document types the applicant never actually scanned.
-    if (documents.length > 0) out.push({ documentType, documents });
-  }
-  return out;
 }
 
 // --- Official search-response mapping -------------------------------------------
@@ -620,7 +555,6 @@ export class OfficialImportSession {
       `${DETAIL_BASE}/${encodeURIComponent(id)}`,
       { method: 'GET' },
     );
-    const supportingDocumentsData = extractSupportingDocuments(body);
     const sanitized = sanitizeOfficialJson(body);
     if (typeof sanitized !== 'object' || sanitized === null || Array.isArray(sanitized)) {
       throw new ApiError(
@@ -630,7 +564,7 @@ export class OfficialImportSession {
         0,
       );
     }
-    return { ...(sanitized as Record<string, unknown>), supportingDocumentsData };
+    return sanitized as Record<string, unknown>;
   }
 
   async findSlots(

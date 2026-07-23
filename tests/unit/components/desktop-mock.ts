@@ -22,7 +22,6 @@ function createMock(): MockShape {
       list: vi.fn(),
       get: vi.fn(),
       readyByLocation: vi.fn(),
-      submit: vi.fn(),
       importPreview: vi.fn(),
       importConfirm: vi.fn(),
     },
