@@ -61,6 +61,8 @@ export interface OfficialApiOptions {
 const DEFAULT_ORIGIN = 'https://online.nepalpassport.gov.np';
 const USER_AGENT = 'Local-Nepal-Passport-Appointment-Helper/0.1';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 120_000;
+const SLOT_CHECK_CONCURRENCY = 3;
 
 export class OfficialApi {
   private token: string | null = null;
@@ -112,7 +114,7 @@ export class OfficialApi {
       response = await this.options.fetchFn(url, {
         method: 'GET',
         headers: { Accept: 'application/json', ATK: 'jwt', RTK: 'rtk', 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 20000),
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
       });
     } catch (error) {
       throw new OfficialApiError(
@@ -187,9 +189,15 @@ export class OfficialApi {
     daysAhead: number,
   ): Promise<FoundOfficialSlot[]> {
     const days = await this.candidateDates(serviceId, providerId, startDate, daysAhead);
-    const slots = await Promise.all(
-      days.map(async (day) => ({ day, slots: await this.freeSlots(serviceId, providerId, day) })),
-    );
+    const slots: { day: string; slots: OfficialSlot[] }[] = [];
+    for (let index = 0; index < days.length; index += SLOT_CHECK_CONCURRENCY) {
+      slots.push(...await Promise.all(
+        days.slice(index, index + SLOT_CHECK_CONCURRENCY).map(async (day) => ({
+          day,
+          slots: await this.freeSlots(serviceId, providerId, day),
+        })),
+      ));
+    }
     return slots.flatMap(({ day, slots: daySlots }) =>
       daySlots.flatMap((slot) =>
         typeof slot.startTime === 'string' && typeof slot.endTime === 'string'
@@ -346,7 +354,7 @@ export class OfficialApi {
           method: payload !== undefined ? 'POST' : 'GET',
           headers,
           body: payload !== undefined ? JSON.stringify(payload) : undefined,
-          signal: AbortSignal.timeout(this.options.timeoutMs ?? 20000),
+          signal: AbortSignal.timeout(this.options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
         });
       } catch (error) {
         throw new OfficialApiError(

@@ -26,6 +26,7 @@ import { cn } from '../lib/utils';
 const PAGE_SIZE = 25;
 
 const statusTone: Record<string, BadgeTone> = {
+  fresh: 'gray',
   ready: 'green',
   incomplete: 'amber',
   queued: 'blue',
@@ -34,7 +35,7 @@ const statusTone: Record<string, BadgeTone> = {
   cancelled: 'gray',
 };
 
-const statusOptions = ['ready', 'incomplete', 'queued', 'booked', 'not_permitted', 'cancelled'];
+const statusOptions = ['fresh', 'ready', 'incomplete', 'queued', 'booked', 'not_permitted', 'cancelled'];
 const typeOptions = ['First issuance (new)', 'Passport renewal', 'Replacement (lost/stolen)'];
 const tabs = [
   { value: 'unbooked', label: 'Unbooked' },
@@ -62,11 +63,8 @@ const sortValue = (client: ClientSummary, key: SortKey): string | number => {
   }
 };
 
-// Docs complete and not yet submitted to the official portal — the
-// "not_permitted"/"booked"/"cancelled" buckets never reach desktop_status
-// 'ready' unless an application id is already set, so this alone is enough.
 const canMakeReady = (client: ClientSummary): boolean =>
-  client.desktop_status === 'ready' && !client.official_application_id;
+  client.desktop_status === 'fresh';
 
 export function ClientsPage() {
   const { toast } = useToast();

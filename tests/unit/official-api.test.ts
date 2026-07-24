@@ -31,6 +31,27 @@ describe('OfficialApi', () => {
     expect(fetchFn.mock.calls[1][0]).toContain('serviceID=41&providerID=525');
   });
 
+  it('limits concurrent date checks against a slow passport server', async () => {
+    let active = 0;
+    let maximum = 0;
+    const fetchFn = vi.fn(async (url: string) => {
+      if (url.endsWith('/interface-adapter/get-free-access-token')) return json({ token: 'free-token' });
+      if (url.includes('/findNonWorkingDays?')) {
+        return json({ data: { localDates: [], maxEndDate: '2026-07-31' } });
+      }
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return json({ data: [] });
+    });
+    const api = new OfficialApi({ fetchFn });
+
+    await api.findSlots(41, 525, '2026-07-25', 7);
+
+    expect(maximum).toBe(3);
+  });
+
   it('submits, searches, and cancels without a portal window', async () => {
     const fetchFn = vi.fn(async (url: string) => {
       if (url.endsWith('/interface-adapter/get-free-access-token')) return json({ token: 'free-token' });

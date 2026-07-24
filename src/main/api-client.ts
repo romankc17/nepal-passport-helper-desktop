@@ -256,8 +256,23 @@ export class ApiClient {
     return this.request<WatcherCheckResult>('POST', `/watchers/${id}/check/`, opts);
   }
 
-  async watcherLocalStart(id: number, force: boolean): Promise<LocalRunStart> {
-    return this.request<LocalRunStart>('POST', `/watchers/${id}/local-run/start/`, { force });
+  async watcherLocalStart(
+    id: number,
+    force: boolean,
+    clientIds: number[] = [],
+  ): Promise<LocalRunStart> {
+    return this.request<LocalRunStart>('POST', `/watchers/${id}/local-run/start/`, {
+      force,
+      client_ids: clientIds,
+    });
+  }
+
+  async localWatcherBookStart(input: {
+    watcher: Watcher;
+    client_ids: number[];
+    slots: { date: string; start_time: string; end_time: string }[];
+  }): Promise<{ watcher_id: number; run_id: string; jobs: LocalBookingJob[] }> {
+    return this.request('POST', '/local-watchers/book/start/', input);
   }
 
   async watcherLocalPlan(
@@ -403,8 +418,9 @@ export class ApiClient {
   async labSubmitLocalComplete(
     batchId: string,
     results: { client_id: number; index: number; application_id: string; receipt?: string; error?: string }[],
+    final = true,
   ): Promise<{ batch_id: string }> {
-    return this.request('POST', '/lab/local-submit/complete/', { batch_id: batchId, results });
+    return this.request('POST', '/lab/local-submit/complete/', { batch_id: batchId, results, final });
   }
 
   async labBook(input: LabBookInput): Promise<{ batch_id: string }> {
@@ -418,8 +434,16 @@ export class ApiClient {
     return this.request('POST', '/lab/book/', { ...input, local_execution: true });
   }
 
-  async labBookLocalComplete(batchId: string): Promise<{ batch_id: string }> {
-    return this.request('POST', '/lab/local-book/complete/', { batch_id: batchId });
+  async labBookLocalComplete(
+    batchId: string,
+    recordIds?: number[],
+    final = true,
+  ): Promise<{ batch_id: string }> {
+    return this.request('POST', '/lab/local-book/complete/', {
+      batch_id: batchId,
+      record_ids: recordIds,
+      final,
+    });
   }
 
   async labJob(batchId: string): Promise<LabJob> {

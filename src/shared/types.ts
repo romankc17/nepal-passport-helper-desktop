@@ -91,6 +91,7 @@ export interface LocationItem {
 
 export type ClientStatus = 'fresh' | 'ready' | 'booked' | 'canceled';
 export type ClientDesktopStatus =
+  | 'fresh'
   | 'ready'
   | 'incomplete'
   | 'queued'
@@ -310,6 +311,7 @@ export interface SlotInfo {
 
 export interface Watcher {
   id: number;
+  owner_id?: number;
   name: string;
   mode: WatcherMode;
   province_id: number | string;
@@ -340,6 +342,7 @@ export interface WatcherCreateInput {
   district_id: number | string;
   province_id: number | string;
   provider_name: string;
+  district_name?: string;
   country_id?: number | string;
   country_name?: string;
   mode: WatcherMode;
@@ -375,6 +378,7 @@ export interface LocalRunStart {
   start_date?: string;
   days_ahead?: number;
   mode?: WatcherMode;
+  jobs?: LocalBookingJob[];
 }
 
 export interface LocalBookingJob {
@@ -435,12 +439,17 @@ export interface WatcherDetail {
 export interface WatcherHistoryItem {
   id: number;
   started_at: string;
-  finished_at: string;
+  finished_at: string | null;
   success: boolean;
   error: string | null;
-  slots_found: number;
+  slots_found: number | null;
   request: Record<string, unknown>;
   response: Record<string, unknown>;
+}
+
+export interface LocalWatcherSnapshot {
+  watchers: Watcher[];
+  history: Record<string, WatcherHistoryItem[]>;
 }
 
 // Appointments

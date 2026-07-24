@@ -58,6 +58,24 @@ function makeWatcher(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function installDraftStorage(drafts: Record<string, unknown>[]) {
+  let value = JSON.stringify(drafts);
+  const storage = {
+    getItem: vi.fn(() => value),
+    setItem: vi.fn((_key: string, next: string) => {
+      value = next;
+    }),
+    removeItem: vi.fn(),
+    clear: vi.fn(() => {
+      value = '[]';
+    }),
+    length: 1,
+    key: vi.fn(),
+  };
+  Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
+  return storage;
+}
+
 describe('BookingLabPage', () => {
   beforeEach(() => {
     installDesktopMock();
@@ -104,6 +122,46 @@ describe('BookingLabPage', () => {
     expect(screen.getByText('Number of clients')).toBeInTheDocument();
   });
 
+  it('removes only successfully submitted drafts and keeps failed or unselected drafts', async () => {
+    const desktop = installDesktopMock();
+    const drafts = [
+      { given_name: 'Success', surname: 'Client', appointment_provider_name: 'Surkhet' },
+      { given_name: 'Untouched', surname: 'Client', appointment_provider_name: 'Surkhet' },
+      { given_name: 'Retry', surname: 'Client', appointment_provider_name: 'Surkhet' },
+    ];
+    installDraftStorage(drafts);
+    desktop.lab.submit = vi.fn().mockResolvedValue({ batch_id: 'batch-1' });
+    desktop.lab.job = vi.fn().mockResolvedValue({
+      batch_id: 'batch-1',
+      kind: 'submit',
+      total: 2,
+      completed: 2,
+      failed: 1,
+      finished: true,
+      stages: { 0: 'done', 1: 'failed' },
+      result: {
+        submitted: [{ client_id: 10, applicant_id: 20, name: 'Success Client', official_application_id: 'WPT-1' }],
+        failed: [{ client_id: 30, name: 'Retry Client', error: 'Official portal rejected the application' }],
+      },
+      error: null,
+    });
+
+    renderWithProviders(<BookingLabPage />, { withAuth: true });
+    await userEvent.click(await screen.findByLabelText('Select Success'));
+    await userEvent.click(screen.getByLabelText('Select Retry'));
+    await userEvent.click(screen.getByRole('button', { name: 'Submit for appointment' }));
+
+    await waitFor(() => {
+      const remaining = JSON.parse(
+        localStorage.getItem('booking-lab-drafts') ?? '[]',
+      ) as { given_name: string }[];
+      expect(remaining.map((draft) => draft.given_name)).toEqual(['Untouched', 'Retry']);
+    });
+    expect(desktop.lab.submit).toHaveBeenCalledWith(expect.objectContaining({
+      clients: [drafts[0], drafts[2]],
+    }));
+  });
+
   it('shows generated drafts from localStorage', async () => {
     const drafts = [
       {
@@ -113,18 +171,7 @@ describe('BookingLabPage', () => {
         appointment_provider_name: 'Surkhet',
       },
     ];
-    const mockStorage = {
-      getItem: vi.fn().mockReturnValue(JSON.stringify(drafts)),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn(),
-      length: 1,
-      key: vi.fn(),
-    };
-    Object.defineProperty(window, 'localStorage', {
-      value: mockStorage,
-      writable: true,
-    });
+    installDraftStorage(drafts);
 
     renderWithProviders(<BookingLabPage />, { withAuth: true });
 

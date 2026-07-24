@@ -79,7 +79,11 @@ export class WatcherScheduler {
       if (intervalChanged && existing.state === 'scheduled' && !existing.inFlight) {
         this.scheduleRun(existing, this.jitter(watcher.intervalSeconds * 1000), 'scheduled');
       }
-      if (existing.state === 'paused' || existing.state === 'auth-expired') {
+      if (
+        existing.state === 'idle' ||
+        existing.state === 'paused' ||
+        existing.state === 'auth-expired'
+      ) {
         existing.backoffAttempt = 0;
         this.scheduleRun(existing, 0, 'scheduled');
       }

@@ -43,6 +43,7 @@ import { isE2E } from './e2e';
 import type { OfficialImportSession } from './official-import';
 import type { OfficialWorker } from './official-worker';
 import type { LocalQueueStore } from './local-queue';
+import type { LocalWatcherStore } from './local-watchers';
 import { isTrustedRendererFrame } from './window';
 import type { UpdateManager } from './update';
 
@@ -65,7 +66,7 @@ export interface IpcDeps {
   officialImport: OfficialImportSession;
   officialWorker: OfficialWorker;
   localQueue: LocalQueueStore;
-  // Fetches the server watcher list and reconciles scheduler loops.
+  localWatchers: LocalWatcherStore;
   startWatchers: () => Promise<void>;
   stopWatchers: () => void;
   resyncWatchers: () => Promise<void>;
@@ -158,7 +159,10 @@ export function registerIpc(deps: IpcDeps): void {
       }
       if (error instanceof ApiError && error.code === 'NETWORK_ERROR') {
         const snapshot = store.get().sessionSnapshot;
-        if (snapshot) return { ...snapshot, offline: true };
+        if (snapshot) {
+          await deps.startWatchers();
+          return { ...snapshot, offline: true };
+        }
       }
       throw error;
     }
@@ -166,7 +170,26 @@ export function registerIpc(deps: IpcDeps): void {
 
   // --- Overview ---
 
-  handle(channels.overviewGet, () => api.overview());
+  handle(channels.overviewGet, async () => {
+    const overview = await api.overview();
+    if (isE2E) return overview;
+    const watchers = deps.localWatchers.list();
+    const runtime = new Map(scheduler.getRuntime().map((item) => [item.watcherId, item]));
+    return {
+      ...overview,
+      active_watchers: watchers.filter((watcher) => watcher.active).length,
+      upcoming_checks: watchers.flatMap((watcher) => {
+        const nextRunAt = runtime.get(watcher.id)?.nextRunAt;
+        return watcher.active && nextRunAt
+          ? [{
+            watcher_id: watcher.id,
+            provider_name: watcher.provider_name,
+            due_at: new Date(nextRunAt).toISOString(),
+          }]
+          : [];
+      }),
+    };
+  });
 
   // --- Locations ---
 
@@ -207,16 +230,24 @@ export function registerIpc(deps: IpcDeps): void {
 
   const addToLocalQueue = async (raw: unknown) => {
     const input = validateQueueAddInput(raw);
-    let watcher = (await api.watchersList()).find(
-      (item) => String(item.provider_id) === String(input.provider_id),
+    const watchers = isE2E ? await api.watchersList() : deps.localWatchers.list();
+    let watcher = watchers.find(
+      (item) =>
+        item.mode === 'book' && String(item.provider_id) === String(input.provider_id),
     );
     if (!watcher) {
-      watcher = await api.watchersCreate({
+      const createInput = {
         ...input,
         mode: 'book',
         interval_seconds: settings.get().defaultIntervalSeconds,
         days_ahead: settings.get().defaultDaysAhead,
-      });
+      } as const;
+      watcher = isE2E
+        ? await api.watchersCreate(createInput)
+        : deps.localWatchers.create(createInput, {
+          interval: settings.get().defaultIntervalSeconds,
+          days: settings.get().defaultDaysAhead,
+        });
       await deps.resyncWatchers();
     }
     const queued: { client_id: number }[] = [];
@@ -237,6 +268,17 @@ export function registerIpc(deps: IpcDeps): void {
       }, Date.now());
       if (duplicate) skipped.push(duplicate);
       else queued.push({ client_id: clientId });
+    }
+    if (!isE2E && queued.length) {
+      const pending = deps.localQueue
+        .forProvider(input.provider_id)
+        .filter((item) => item.status === 'queued' || item.status === 'failed').length;
+      const current = deps.localWatchers.get(watcher.id);
+      deps.localWatchers.update(watcher.id, {
+        desired_bookings: current.booked_count + pending,
+      });
+      watcher = deps.localWatchers.resume(watcher.id);
+      await deps.resyncWatchers();
     }
     emitLocalQueue();
     return { watcher, queued, skipped };
@@ -333,29 +375,45 @@ export function registerIpc(deps: IpcDeps): void {
 
   // --- Watchers ---
 
-  handle(channels.watchersList, () => api.watchersList());
-  handle(channels.watchersGet, (raw: unknown) => api.watchersGet(asId(raw)));
+  handle(channels.watchersList, () =>
+    isE2E ? api.watchersList() : deps.localWatchers.list().map((watcher) => ({
+      ...watcher,
+      queued_count: deps.localQueue.forProvider(watcher.provider_id).filter(
+        (item) => item.status === 'queued' || item.status === 'failed',
+      ).length,
+    })));
+  handle(channels.watchersGet, (raw: unknown) =>
+    isE2E ? api.watchersGet(asId(raw)) : deps.localWatchers.detail(asId(raw)));
   handle(channels.watchersCreate, async (raw: unknown) => {
-    const watcher = await api.watchersCreate(validateWatcherCreateInput(raw));
+    const input = validateWatcherCreateInput(raw);
+    const watcher = isE2E
+      ? await api.watchersCreate(input)
+      : deps.localWatchers.create(input, {
+        interval: settings.get().defaultIntervalSeconds,
+        days: settings.get().defaultDaysAhead,
+      });
     await deps.resyncWatchers();
     return watcher;
   });
   handle(channels.watchersUpdateSettings, async (rawId: unknown, rawPatch: unknown) => {
-    const watcher = await api.watchersUpdateSettings(
-      asId(rawId),
-      validateWatcherSettingsPatch(rawPatch),
-    );
+    const id = asId(rawId);
+    const patch = validateWatcherSettingsPatch(rawPatch);
+    const watcher = isE2E
+      ? await api.watchersUpdateSettings(id, patch)
+      : deps.localWatchers.update(id, patch);
     await deps.resyncWatchers();
     return watcher;
   });
   handle(channels.watchersPause, async (raw: unknown) => {
-    const watcher = await api.watchersPause(asId(raw));
+    const id = asId(raw);
+    const watcher = isE2E ? await api.watchersPause(id) : deps.localWatchers.pause(id);
     scheduler.pause(watcher.id);
     return watcher;
   });
   handle(channels.watchersResume, async (raw: unknown) => {
-    const watcher = await api.watchersResume(asId(raw));
-    scheduler.resume(watcher.id);
+    const id = asId(raw);
+    const watcher = isE2E ? await api.watchersResume(id) : deps.localWatchers.resume(id);
+    await deps.resyncWatchers();
     return watcher;
   });
   handle(channels.watchersCheck, (rawId: unknown, rawOpts: unknown) => {
@@ -365,16 +423,19 @@ export function registerIpc(deps: IpcDeps): void {
   });
   handle(channels.watchersDelete, async (raw: unknown) => {
     const id = asId(raw);
-    await api.watchersDelete(id);
+    if (isE2E) await api.watchersDelete(id);
+    else deps.localWatchers.delete(id);
     await deps.resyncWatchers();
     return { deleted: true };
   });
   handle(channels.watchersReorder, (rawId: unknown, rawIds: unknown) =>
     api.watchersReorder(asId(rawId), asIdArray(rawIds, 'bookingIds')),
   );
-  handle(channels.watchersHistory, (rawId: unknown, rawPage: unknown) =>
-    api.watchersHistory(asId(rawId), asOptionalPositiveInt(rawPage, 'page', 100000)),
-  );
+  handle(channels.watchersHistory, (rawId: unknown, rawPage: unknown) => {
+    const id = asId(rawId);
+    const page = asOptionalPositiveInt(rawPage, 'page', 100000);
+    return isE2E ? api.watchersHistory(id, page) : deps.localWatchers.history(id, page);
+  });
 
   // --- Appointments ---
 

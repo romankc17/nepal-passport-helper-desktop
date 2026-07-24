@@ -1,8 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Inbox, ListOrdered, Zap } from 'lucide-react';
+import { ChevronDown, Inbox, ListOrdered, Zap } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import type { ClientSummary, LocalQueueItem, ReadyByLocationGroup } from '../../../shared/types';
+import type {
+  ClientSummary,
+  LocalQueueItem,
+  ReadyByLocationGroup,
+  Watcher,
+  WatcherRuntime,
+} from '../../../shared/types';
 import { api, queryKeys } from '../api';
 import { Badge, type BadgeTone } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -16,12 +22,14 @@ import { Select } from '../components/Select';
 import { Skeleton } from '../components/Skeleton';
 import { useToast } from '../components/Toast';
 import { describeError } from '../lib/errors';
-import { foreignCountry, latinName } from '../lib/format';
-import { useDebouncedValue } from '../lib/hooks';
+import { foreignCountry, formatCountdown, latinName } from '../lib/format';
+import { useDebouncedValue, useNow } from '../lib/hooks';
 import { resolveProviderLocation } from '../lib/resolve-location';
 import { useOperations } from '../operations';
+import { useWatcherRuntime } from '../runtime';
 
 const desktopStatusTone: Record<string, BadgeTone> = {
+  fresh: 'gray',
   ready: 'green',
   incomplete: 'amber',
   queued: 'blue',
@@ -42,11 +50,48 @@ function clientMatches(
   return true;
 }
 
+function lastCheckText(watcher: Watcher | undefined, now: number): string {
+  if (!watcher?.last_checked_at) return 'Not checked yet';
+  const checkedAt = new Date(watcher.last_checked_at).getTime();
+  return Number.isNaN(checkedAt) ? 'Not checked yet' : `${formatCountdown(now - checkedAt)} ago`;
+}
+
+function nextCheckText(
+  watcher: Watcher | undefined,
+  live: WatcherRuntime | undefined,
+  now: number,
+): string {
+  if (live?.state === 'checking') return 'Checking now';
+  if (live?.state === 'paused' || watcher?.active === false) return 'Paused';
+  if (live?.state === 'offline') return 'Waiting for connection';
+  if (live?.state === 'captcha') return 'CAPTCHA required';
+  if (live?.state === 'auth-expired') return 'Sign in required';
+  const serverDueAt = watcher?.next_check_due_at
+    ? new Date(watcher.next_check_due_at).getTime()
+    : undefined;
+  const nextRunAt = live?.nextRunAt ?? serverDueAt;
+  return nextRunAt && !Number.isNaN(nextRunAt)
+    ? `in ${formatCountdown(nextRunAt - now)}`
+    : 'Not scheduled';
+}
+
+function queueItemNote(item: LocalQueueItem): string {
+  if (item.status === 'failed') return item.error ?? 'Booking failed';
+  if (item.status === 'submitting') return 'Submitting application';
+  if (item.status === 'booking') return 'Booking appointment';
+  if (item.status === 'booked' && item.appointment) {
+    return `${item.appointment.date} · ${item.appointment.start_time}`;
+  }
+  return 'Waiting for the next slot check';
+}
+
 export function QueuePage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { startQueue, startBookNow } = useOperations();
+  const { runtime } = useWatcherRuntime();
   const [searchParams, setSearchParams] = useSearchParams();
+  const now = useNow();
 
   const search = searchParams.get('q') ?? '';
   const locationFilter = searchParams.get('location') ?? '';
@@ -84,8 +129,21 @@ export function QueuePage() {
     queryFn: () => api.queue.get(),
   });
 
+  const watchersQuery = useQuery({
+    queryKey: queryKeys.watchers,
+    queryFn: () => api.watchers.list(),
+    refetchInterval: 60000,
+    staleTime: 60000,
+  });
+
   useEffect(() => window.desktop.on('local-queue-state', (payload) => {
     queryClient.setQueryData(queryKeys.localQueue, payload as { items: LocalQueueItem[] });
+  }), [queryClient]);
+
+  useEffect(() => window.desktop.on('watcher-state', (event) => {
+    if (event.state !== 'checking') {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
+    }
   }), [queryClient]);
 
   const sessionGroups = [...(localQueueQuery.data?.items ?? []).reduce((groups, item) => {
@@ -95,6 +153,24 @@ export function QueuePage() {
     groups.set(key, group);
     return groups;
   }, new Map<string, { name: string; items: LocalQueueItem[] }>()).entries()];
+
+  const queuedClientIds = new Set(
+    (localQueueQuery.data?.items ?? [])
+      .filter((item) => item.status !== 'booked')
+      .map((item) => item.client_id),
+  );
+
+  const watchersByProvider = useMemo(() => {
+    const byProvider = new Map<string, Watcher>();
+    for (const watcher of watchersQuery.data ?? []) {
+      const key = String(watcher.provider_id);
+      const current = byProvider.get(key);
+      if (!current || (watcher.mode === 'book' && current.mode !== 'book')) {
+        byProvider.set(key, watcher);
+      }
+    }
+    return byProvider;
+  }, [watchersQuery.data]);
 
   const groups = readyQuery.data ?? [];
 
@@ -130,7 +206,9 @@ export function QueuePage() {
   };
 
   const groupSelectedIds = (group: ReadyByLocationGroup) =>
-    group.clients.filter((client) => selected.has(client.id)).map((client) => client.id);
+    group.clients
+      .filter((client) => client.can_book && selected.has(client.id))
+      .map((client) => client.id);
 
   const runForGroup = async (
     group: ReadyByLocationGroup,
@@ -203,9 +281,103 @@ export function QueuePage() {
     <div>
       <PageHeader
         title="Booking Queue"
-        description="Keep selected clients in this desktop session and book them when watchers find slots"
+        description="See who is waiting and book up to 20 clients in parallel when a watcher finds slots"
       />
 
+      <h2 className="mb-3 text-sm font-semibold text-slate-700">Queued clients</h2>
+      {sessionGroups.length === 0 ? (
+        <Card className="mb-8">
+          <EmptyState
+            icon={ListOrdered}
+            title="No clients selected"
+            description="Add a bookable client below. This queue lasts only for the current desktop session."
+          />
+        </Card>
+      ) : (
+        <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {sessionGroups.map(([providerId, group]) => {
+            const watcher = watchersByProvider.get(providerId);
+            const live = watcher ? runtime.get(watcher.id) : undefined;
+            return (
+              <details
+                key={providerId}
+                className="group self-start rounded-lg border border-slate-200 bg-white shadow-sm"
+              >
+                <summary className="cursor-pointer list-none p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-slate-900">{group.name}</h3>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        {group.items.length} client{group.items.length === 1 ? '' : 's'} queued
+                      </p>
+                    </div>
+                    <ChevronDown
+                      className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180"
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                    <div>
+                      <dt className="text-slate-400">Last check</dt>
+                      <dd className="mt-0.5 font-medium text-slate-700">
+                        {lastCheckText(watcher, now)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-400">Next check</dt>
+                      <dd className="mt-0.5 font-medium text-slate-700">
+                        {nextCheckText(watcher, live, now)}
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-3 text-xs font-medium text-primary group-open:hidden">
+                    Expand client list
+                  </p>
+                </summary>
+                <div className="grid grid-cols-1 gap-2 border-t border-slate-100 p-3 sm:grid-cols-2">
+                  {group.items.map((item) => (
+                    <div
+                      key={item.client_id}
+                      className="flex min-w-0 flex-col rounded-md border border-slate-200 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="truncate text-sm font-medium text-slate-800">
+                          {item.client_name}
+                        </p>
+                        <Badge
+                          tone={
+                            item.status === 'failed'
+                              ? 'red'
+                              : item.status === 'queued'
+                                ? 'amber'
+                                : 'green'
+                          }
+                        >
+                          {item.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 min-h-8 text-xs text-slate-400">{queueItemNote(item)}</p>
+                      <Button
+                        className="mt-2 self-start"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setRemoveBooking({ id: item.client_id, name: item.client_name })
+                        }
+                        aria-label={`Remove ${item.client_name} from this session`}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            );
+          })}
+        </div>
+      )}
+
+      <h2 className="mb-3 text-sm font-semibold text-slate-700">Add clients to queue</h2>
       <Card className="mb-6">
         <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <Input
@@ -251,7 +423,7 @@ export function QueuePage() {
             onValueChange={(value) => setParam('status', value === 'all' ? '' : value)}
             options={[
               { value: 'all', label: 'All statuses' },
-              ...['ready', 'incomplete', 'booked', 'not_permitted', 'cancelled'].map(
+              ...['fresh', 'ready', 'incomplete', 'booked', 'not_permitted', 'cancelled'].map(
                 (status) => ({ value: status, label: status.replace('_', ' ') }),
               ),
             ]}
@@ -259,7 +431,7 @@ export function QueuePage() {
         </CardBody>
       </Card>
 
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">Ready to book</h2>
+      <h3 className="mb-3 text-sm font-semibold text-slate-700">Clients by office</h3>
       {readyQuery.isPending ? (
         <div className="mb-8 flex flex-col gap-4">
           {[0, 1].map((index) => (
@@ -273,15 +445,17 @@ export function QueuePage() {
         <Card className="mb-8">
           <EmptyState
             icon={Inbox}
-            title="No ready clients match"
-            description="Clients appear here once their documents are complete and your account can book at their office."
+            title="No clients match"
+            description="Clients assigned to an available office appear here; incomplete rows cannot be selected."
           />
         </Card>
       ) : (
         <div className="mb-8 flex flex-col gap-4">
           {visibleGroups.map((group) => {
             const selectedIds = groupSelectedIds(group);
-            const allSelected = group.clients.length > 0 && selectedIds.length === group.clients.length;
+            const selectableClients = group.clients.filter((client) => client.can_book);
+            const allSelected =
+              selectableClients.length > 0 && selectedIds.length === selectableClients.length;
             const groupBusy = busyGroup === group.provider_id;
             return (
               <Card key={group.provider_id}>
@@ -325,10 +499,10 @@ export function QueuePage() {
                       checked={allSelected}
                       indeterminate={selectedIds.length > 0 && !allSelected}
                       onCheckedChange={(checked) =>
-                        group.clients.forEach((client) => toggleClient(client.id, checked))
+                        selectableClients.forEach((client) => toggleClient(client.id, checked))
                       }
                     />
-                    Select all ({group.clients.length})
+                    Select bookable ({selectableClients.length})
                   </label>
                 </div>
                 <ul className="divide-y divide-slate-100 border-t border-slate-100">
@@ -337,6 +511,7 @@ export function QueuePage() {
                       <Checkbox
                         ariaLabel={`Select ${client.full_name}`}
                         checked={selected.has(client.id)}
+                        disabled={!client.can_book}
                         onCheckedChange={(checked) => toggleClient(client.id, checked)}
                       />
                       <div className="min-w-0 flex-1">
@@ -350,67 +525,26 @@ export function QueuePage() {
                             : ''}
                         </p>
                       </div>
-                      <Badge tone={desktopStatusTone[client.desktop_status] ?? 'gray'}>
-                        {client.desktop_status.replace('_', ' ')}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge tone={desktopStatusTone[client.desktop_status] ?? 'gray'}>
+                          {client.desktop_status.replace('_', ' ')}
+                        </Badge>
+                        {queuedClientIds.has(client.id) && (
+                          <span
+                            aria-label={`${client.full_name} is queued`}
+                            title="Queued in this session"
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-700"
+                          >
+                            <ListOrdered className="h-3.5 w-3.5" aria-hidden="true" />
+                          </span>
+                        )}
+                      </div>
                     </li>
                   ))}
                 </ul>
               </Card>
             );
           })}
-        </div>
-      )}
-
-      <h2 className="mb-3 text-sm font-semibold text-slate-700">This session</h2>
-      {sessionGroups.length === 0 ? (
-        <Card>
-          <EmptyState
-            icon={ListOrdered}
-            title="No clients selected"
-            description="Selections are kept only in this desktop session and disappear when you sign out or close the app."
-          />
-        </Card>
-      ) : (
-        <div className="flex flex-col gap-4">
-          {sessionGroups.map(([providerId, group]) => (
-              <Card key={providerId}>
-                <CardHeader
-                  title={`${group.name} · ${group.items.length} selected`}
-                />
-                <ul className="divide-y divide-slate-100">
-                  {group.items.map((item) => (
-                      <li key={item.client_id} className="flex items-center gap-3 px-5 py-2.5">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-slate-800">
-                            {item.client_name}
-                          </p>
-                          <p className="text-xs text-slate-400">Stored locally for this session</p>
-                        </div>
-                        <Badge
-                          tone={
-                            item.status === 'failed'
-                              ? 'red'
-                              : item.status === 'queued'
-                                ? 'amber'
-                                : 'green'
-                          }
-                        >
-                          {item.status}
-                        </Badge>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setRemoveBooking({ id: item.client_id, name: item.client_name })}
-                          aria-label={`Remove ${item.client_name} from this session`}
-                        >
-                          Remove
-                        </Button>
-                      </li>
-                    ))}
-                </ul>
-              </Card>
-          ))}
         </div>
       )}
 

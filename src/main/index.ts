@@ -21,6 +21,7 @@ import { getOfficialImportSession } from './official-import';
 import { OfficialApi, OfficialApiError } from './official-api';
 import { OfficialWorker } from './official-worker';
 import { LocalQueueStore } from './local-queue';
+import { LocalWatcherStore } from './local-watchers';
 import { applySessionSecurity, createMainWindow, focusOrCreateWindow } from './window';
 import { createUpdateManager } from './update';
 
@@ -67,11 +68,18 @@ async function bootstrap(): Promise<void> {
   const officialImport = getOfficialImportSession({ getWindow: () => mainWindow });
   const officialApi = new OfficialApi({ fetchFn: (url, init) => net.fetch(url, init) });
   const localQueue = new LocalQueueStore();
+  const localWatchers = new LocalWatcherStore(store);
+  const notificationsRef: { current: Notifications | null } = { current: null };
   const officialWorker = new OfficialWorker(api, officialApi, localQueue, () => {
     mainWindow?.webContents.send('local-queue-state', { items: localQueue.all() });
+  }, localWatchers, (watcher, slots) => {
+    notificationsRef.current?.show({
+      title: `${slots.length} passport slot${slots.length === 1 ? '' : 's'} available`,
+      body: watcher.provider_name,
+      route: '/watchers',
+    });
   });
 
-  const notificationsRef: { current: Notifications | null } = { current: null };
   // Each finished run produces a fresh CheckOutcome object, so identity-based
   // dedupe fires the booking notification exactly once per run — including
   // manual "check now" runs, which don't end in the 'scheduled' state.
@@ -148,11 +156,11 @@ async function bootstrap(): Promise<void> {
     }
   });
   netStatus.on('online', () => {
-    scheduler.setOffline(false);
+    if (isE2E) scheduler.setOffline(false);
     mainWindow?.webContents.send('net-status', { online: true });
   });
   netStatus.on('offline', () => {
-    scheduler.setOffline(true);
+    if (isE2E) scheduler.setOffline(true);
     mainWindow?.webContents.send('net-status', { online: false });
   });
   netStatus.start();
@@ -181,14 +189,15 @@ async function bootstrap(): Promise<void> {
     officialImport,
     officialWorker,
     localQueue,
+    localWatchers,
     startWatchers: async () => {
-      const watchers = await api.watchersList();
+      const watchers = isE2E ? await api.watchersList() : localWatchers.list();
       scheduler.syncFromServer(toSyncItems(watchers));
     },
     stopWatchers: () => scheduler.syncFromServer([]),
     resyncWatchers: async () => {
       try {
-        const watchers = await api.watchersList();
+        const watchers = isE2E ? await api.watchersList() : localWatchers.list();
         scheduler.syncFromServer(toSyncItems(watchers));
       } catch (error) {
         // The mutation itself already succeeded; a resync failure is logged

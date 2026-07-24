@@ -52,7 +52,7 @@ export function WatchersPage() {
     <div>
       <PageHeader
         title="Slot Watchers"
-        description="Watchers poll government offices for open appointment slots"
+        description="Watchers run only on this device and check the official portal directly"
         actions={
           <Button onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" aria-hidden="true" />
@@ -145,7 +145,6 @@ function AddWatcherDialog({ open, onOpenChange, onCreated, prefill }: AddWatcher
   const [mode, setMode] = useState<WatcherMode>('book');
   const [intervalSeconds, setIntervalSeconds] = useState('');
   const [daysAhead, setDaysAhead] = useState('');
-  const [notificationEmail, setNotificationEmail] = useState('');
 
   const settingsQuery = useQuery({
     queryKey: queryKeys.settings,
@@ -251,12 +250,12 @@ function AddWatcherDialog({ open, onOpenChange, onCreated, prefill }: AddWatcher
         district_id: isForeign ? '' : selection.districtId,
         province_id: isForeign ? '' : selection.provinceId,
         provider_name: selection.providerName,
+        district_name: isForeign ? '' : selection.districtName,
         country_id: countryId,
         country_name: countryName,
         mode,
         interval_seconds: Number(effectiveInterval),
         days_ahead: Number(effectiveDays),
-        notification_email: notificationEmail.trim(),
       }),
     onSuccess: async () => {
       toast(`Watcher created · ${selection.providerName}`);
@@ -264,7 +263,6 @@ function AddWatcherDialog({ open, onOpenChange, onCreated, prefill }: AddWatcher
       setSelection(emptyLocationSelection);
       setCountryId(COUNTRY_NEPAL_ID);
       setFavoriteKey('');
-      setNotificationEmail('');
       await queryClient.invalidateQueries({ queryKey: queryKeys.watchers });
       await onCreated();
     },
@@ -424,19 +422,6 @@ function AddWatcherDialog({ open, onOpenChange, onCreated, prefill }: AddWatcher
               onChange={(event) => setDaysAhead(event.target.value)}
             />
           </div>
-        </div>
-        <div>
-          <Label htmlFor="add-email">Alert email</Label>
-          <Input
-            id="add-email"
-            type="email"
-            placeholder="email@example.com"
-            value={notificationEmail}
-            onChange={(event) => setNotificationEmail(event.target.value)}
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            Leave blank to disable email alerts for this watcher.
-          </p>
         </div>
       </div>
     </Dialog>

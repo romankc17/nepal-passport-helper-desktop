@@ -11,7 +11,7 @@ const readyClient: ClientSummary = {
   full_name: 'Ready Client',
   application_type: 'First issuance (new)',
   status: 'fresh',
-  desktop_status: 'ready',
+  desktop_status: 'fresh',
   can_book: true,
   official_application_id: '',
   provider_id: 525,

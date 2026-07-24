@@ -288,6 +288,7 @@ function validateLocationIds(input: Record<string, unknown>): {
       ? undefined
       : asLocationId(input.country_id, 'country_id');
   const countryName = asOptionalString(input.country_name, 'country_name', 200);
+  const districtName = asOptionalString(input.district_name, 'district_name', 200);
   // Foreign missions (any country other than Nepal) have no province/district.
   const foreign = countryId !== undefined && String(countryId) !== COUNTRY_NEPAL_ID;
   return {
@@ -299,6 +300,7 @@ function validateLocationIds(input: Record<string, unknown>): {
       ? asOptionalLocationId(input.province_id, 'province_id')
       : asLocationId(input.province_id, 'province_id'),
     provider_name: asString(input.provider_name, 'provider_name', 200),
+    ...(districtName ? { district_name: districtName } : {}),
     ...(countryId !== undefined ? { country_id: countryId } : {}),
     ...(countryName ? { country_name: countryName } : {}),
   };

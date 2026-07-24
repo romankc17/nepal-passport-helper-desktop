@@ -71,7 +71,7 @@ the foreign missions directly as providers.
 ### GET `clients/?page=1&page_size=25&q=&status=&application_type=&provider_id=&booked=&sort=`
 Paginated `{ items: [ClientSummary], page, page_size, total }`.
 ClientSummary: `{ id, full_name, application_type, status (fresh|ready|booked|canceled),
-desktop_status (ready|incomplete|queued|booked|not_permitted|cancelled), can_book,
+desktop_status (fresh|ready|incomplete|queued|booked|not_permitted|cancelled), can_book,
 official_application_id, provider_id, provider_name, district_name, phone, email,
 missing_document_count, queued_booking_id, appointment: {date, start_time}|null, created_by,
 country_id?, country_name?, appointment_country_id?, appointment_country_name? }`
@@ -81,7 +81,7 @@ Adds `document_requirements: [{type, label, required, present}]`, `active_bookin
 
 ### GET `clients/ready-by-location/`
 `{ locations: [{ provider_id, provider_name, district_name, clients: [ClientSummary] }] }`
-— ready, document-complete, permitted clients grouped by office.
+— unbooked, permitted clients grouped by office; `can_book` identifies selectable rows.
 
 ### POST `clients/import-official/preview/` (auth)
 Body: `{ application: {...} }` — the sanitized official-portal application
@@ -139,6 +139,16 @@ Queues (if needed) and immediately runs a forced check-and-book.
 
 ## Watchers
 
+Production desktop watcher definitions, schedules, slots, and history are stored in the device
+config and do not call the watcher CRUD endpoints below. Notify checks call only the official
+passport portal. After a local auto-book watcher finds slots, it calls:
+
+### POST `local-watchers/book/start/`
+Body `{ watcher, client_ids, slots }` → `{ watcher_id, run_id, jobs }`. The server validates
+provider access and client ownership, then returns authorized booking payloads. The desktop books
+at most 20 clients concurrently and reports results to
+`watchers/<watcher_id>/local-run/complete/`.
+
 Watcher JSON: `{ id, name, mode (notify|book), province_id, district_id, provider_id,
 provider_name, district_name, country_id?, country_name? (default 222/"Nepal"; foreign
 missions are normalized to province_id="", location 307), interval_seconds, days_ahead, desired_bookings,
@@ -152,6 +162,7 @@ created_at }`
 ### POST `watchers/<id>/settings/` body `{ interval_seconds?, days_ahead?, notify?, desired_bookings? }` → `{ watcher }`
 ### POST `watchers/<id>/pause/` / `watchers/<id>/resume/` → `{ watcher }`
 ### POST `watchers/<id>/check/` body `{ force?: bool, slots?: [...] }` — runs check now (check-and-book for book-mode watchers) → `{ watcher, checked: bool, slots_found, booked: [...], errors: [...] }`
+### POST `watchers/<id>/local-run/start/` body `{ force, client_ids }` → run metadata plus authorized booking `jobs` templated before the official slot check. The desktop applies a found slot locally and reports it to `local-run/complete/`; `local-run/plan/` remains a compatibility fallback.
 ### DELETE `watchers/<id>/` → `{ deleted: true }`
 ### POST `watchers/<id>/reorder-priority/` body `{ booking_ids: [...] }` → `{ reordered: true }`
 ### GET `watchers/<id>/history/?page=` → paginated `{ items: [{ id, started_at, finished_at, success, error, slots_found, request (redacted), response (redacted) }] }`

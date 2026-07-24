@@ -36,7 +36,7 @@ function SettingRow({
         <Label htmlFor={htmlFor} className="mb-0">
           {label}
         </Label>
-        {hint && <p className="mt-0.5 text-xs text-slate-400">{hint}</p>}
+        {hint && <p className="mt-0.5 text-xs leading-5 text-slate-500">{hint}</p>}
       </div>
       <div className="min-w-0 sm:shrink-0">{control}</div>
     </div>
@@ -163,16 +163,16 @@ export function SettingsPage() {
 
   const currentApiUrl = isDev
     ? (apiUrlDraft ?? '') || 'http://localhost:8000 (default)'
-    : 'Managed automatically';
+    : 'Managed by your administrator';
 
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-7xl">
       <PageHeader
         title="Settings"
-        description="Manage how the app checks, notifies, and stays connected"
+        description="Choose how watchers run, how you are notified, and what this device can access."
       />
 
-      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
         <div className="flex min-w-0 flex-col gap-6">
           <Card>
             <CardHeader title="Notifications" />
@@ -182,13 +182,13 @@ export function SettingsPage() {
               ) : (
                 <>
                   <SettingRow
-                    label="Account notifications"
-                    hint="Apply to every signed-in device"
+                    label="Booking notifications"
+                    hint="Shared across every signed-in device"
                     htmlFor="pref-notifications"
                     control={
                       <Switch
                         id="pref-notifications"
-                        ariaLabel="Account notifications"
+                        ariaLabel="Booking notifications"
                         checked={preferences?.notifications_enabled ?? false}
                         disabled={preferencesMutation.isPending}
                         onCheckedChange={(checked) =>
@@ -200,13 +200,13 @@ export function SettingsPage() {
                     }
                   />
                   <SettingRow
-                    label="Booking sound"
-                    hint="Play when the server reports a booking"
+                    label="Booking alert sound"
+                    hint="Allow signed-in devices to play a sound after a booking"
                     htmlFor="pref-sound"
                     control={
                       <Switch
                         id="pref-sound"
-                        ariaLabel="Booking sound"
+                        ariaLabel="Booking alert sound"
                         checked={preferences?.sound_enabled ?? false}
                         disabled={preferencesMutation.isPending}
                         onCheckedChange={(checked) =>
@@ -234,6 +234,11 @@ export function SettingsPage() {
                   />
                   <SettingRow
                     label="Email address"
+                    hint={
+                      preferences?.email_on_booking
+                        ? 'Saved when you leave this field'
+                        : 'Turn on email alerts to edit this address'
+                    }
                     htmlFor="pref-email-address"
                     control={
                       <Input
@@ -242,6 +247,9 @@ export function SettingsPage() {
                         className="w-full sm:w-64"
                         defaultValue={preferences?.email_address ?? ''}
                         placeholder="you@example.com"
+                        disabled={
+                          !preferences?.email_on_booking || preferencesMutation.isPending
+                        }
                         onBlur={(event) => {
                           if (event.target.value !== (preferences?.email_address ?? '')) {
                             preferencesMutation.mutate({
@@ -258,13 +266,13 @@ export function SettingsPage() {
                 <Skeleton className="h-10 w-full" />
               ) : (
                 <SettingRow
-                  label="This device sound"
-                  hint="Beep on this device for native notifications"
+                  label="Play sound on this device"
+                  hint="Controls native notification sounds on this computer"
                   htmlFor="local-sound"
                   control={
                     <Switch
                       id="local-sound"
-                      ariaLabel="This device sound"
+                      ariaLabel="Play sound on this device"
                       checked={settings?.soundEnabled ?? false}
                       disabled={settingsMutation.isPending}
                       onCheckedChange={(checked) =>
@@ -278,7 +286,7 @@ export function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Application" />
+            <CardHeader title="Watcher & app defaults" />
             <CardBody className="divide-y divide-slate-100">
               {settingsQuery.isPending ? (
                 <Skeleton className="h-24 w-full" />
@@ -317,7 +325,7 @@ export function SettingsPage() {
                   />
                   <SettingRow
                     label="Default check interval"
-                    hint="In seconds; used for new slot watchers"
+                    hint="For new watchers · minimum 30 seconds"
                     htmlFor="default-interval"
                     control={
                       <Input
@@ -339,6 +347,7 @@ export function SettingsPage() {
                   />
                   <SettingRow
                     label="Default days ahead"
+                    hint="For new watchers · between 1 and 90 days"
                     htmlFor="default-days"
                     control={
                       <Input
@@ -387,7 +396,7 @@ export function SettingsPage() {
 
         <div className="flex min-w-0 flex-col gap-6">
           <Card>
-            <CardHeader title="Connection" />
+            <CardHeader title="Connection & updates" />
             <CardBody className="divide-y divide-slate-100">
               <SettingRow
                 label="API URL"
@@ -423,7 +432,7 @@ export function SettingsPage() {
               />
               <SettingRow
                 label="Official portal session"
-                hint="Reset the portal login and anonymous token"
+                hint="Use this if the official portal stops responding"
                 control={
                   <Button
                     size="sm"
@@ -431,52 +440,10 @@ export function SettingsPage() {
                     loading={officialSessionMutation.isPending}
                     onClick={() => officialSessionMutation.mutate()}
                   >
-                    Refresh
+                    Refresh session
                   </Button>
                 }
               />
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader title="Devices" />
-            <CardBody>
-              {meQuery.isPending ? (
-                <Skeleton className="h-16 w-full" />
-              ) : meQuery.isError ? (
-                <p className="text-sm text-danger">Could not load devices.</p>
-              ) : (
-                <ul className="divide-y divide-slate-100">
-                  {(me?.devices ?? []).map((device) => (
-                    <li key={device.id} className="flex items-center justify-between gap-4 py-3">
-                      <div>
-                        <p className="text-sm font-medium text-slate-800">
-                          {device.name} {device.current && <Badge tone="blue">this device</Badge>}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          Last seen {formatDateTime(device.last_seen_at)}
-                        </p>
-                      </div>
-                      {!device.current && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          loading={revokeMutation.isPending}
-                          onClick={() => revokeMutation.mutate(device.id)}
-                        >
-                          Revoke
-                        </Button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardBody>
-          </Card>
-
-          <Card>
-            <CardHeader title="Update" />
-            <CardBody>
               <SettingRow
                 label={appVersion ? `Version ${appVersion}` : 'Checking version…'}
                 hint={updateHint(updateStatus)}
@@ -530,12 +497,13 @@ export function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader title="Account" />
-            <CardBody>
+            <CardHeader title="Account & devices" />
+            <CardBody className="divide-y divide-slate-100">
               <SettingRow
                 label={session?.user.username ?? 'Signed in'}
                 hint={
-                  session?.access.providers.map((provider) => provider.name).join(', ') || undefined
+                  session?.access.providers.map((provider) => provider.name).join(', ') ||
+                  'No booking locations assigned'
                 }
                 control={
                   <Button variant="danger" size="sm" onClick={() => setSignOutOpen(true)}>
@@ -543,6 +511,55 @@ export function SettingsPage() {
                   </Button>
                 }
               />
+              <div className="pt-4">
+                <div className="mb-2 flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-medium text-slate-800">Signed-in devices</h3>
+                    <p className="mt-0.5 text-xs leading-5 text-slate-500">
+                      Revoke a device you no longer use.
+                    </p>
+                  </div>
+                  {!meQuery.isPending && !meQuery.isError && (
+                    <Badge tone="gray">{me?.devices.length ?? 0}</Badge>
+                  )}
+                </div>
+                {meQuery.isPending ? (
+                  <Skeleton className="h-16 w-full" />
+                ) : meQuery.isError ? (
+                  <p className="py-3 text-sm text-danger">Could not load devices.</p>
+                ) : (me?.devices.length ?? 0) === 0 ? (
+                  <p className="py-3 text-sm text-slate-500">No signed-in devices found.</p>
+                ) : (
+                  <ul className="divide-y divide-slate-100">
+                    {(me?.devices ?? []).map((device) => (
+                      <li key={device.id} className="flex items-center justify-between gap-4 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-800">
+                            {device.name}{' '}
+                            {device.current && <Badge tone="blue">this device</Badge>}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Last seen {formatDateTime(device.last_seen_at)}
+                          </p>
+                        </div>
+                        {!device.current && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={revokeMutation.isPending}
+                            loading={
+                              revokeMutation.isPending && revokeMutation.variables === device.id
+                            }
+                            onClick={() => revokeMutation.mutate(device.id)}
+                          >
+                            Revoke
+                          </Button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </CardBody>
           </Card>
         </div>

@@ -82,7 +82,7 @@ export function ActivityPage() {
 
   return (
     <div>
-      <PageHeader title="Activity" description="Unified feed of checks, queue actions and bookings" />
+      <PageHeader title="Activity" description="Slot finds, queue actions and bookings" />
 
       <Card className="mb-4">
         <div className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-6">
@@ -156,7 +156,7 @@ export function ActivityPage() {
           <EmptyState
             icon={Activity}
             title="No activity matches"
-            description="Watcher checks and booking actions show up here."
+            description="Found slots and booking actions show up here."
           />
         ) : (
           <>

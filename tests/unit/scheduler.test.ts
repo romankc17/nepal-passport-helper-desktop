@@ -141,6 +141,19 @@ describe('WatcherScheduler', () => {
     expect(harness.checkNow).toHaveBeenCalledTimes(1);
   });
 
+  it('starts a continuous loop when an idle one-off watcher is resumed', async () => {
+    const harness = makeHarness();
+    harness.scheduler.checkNow(9);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stateOf(harness, 9)?.state).toBe('idle');
+
+    harness.scheduler.syncFromServer([{ id: 9, intervalSeconds: 60, active: true }]);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(harness.checkNow).toHaveBeenCalledTimes(2);
+    expect(stateOf(harness, 9)?.state).toBe('scheduled');
+  });
+
   it('checkNow on a paused watcher runs once and restores the paused state', async () => {
     const harness = makeHarness();
     harness.scheduler.syncFromServer([{ id: 1, intervalSeconds: 60, active: true }]);

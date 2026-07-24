@@ -38,12 +38,25 @@ import { formatDateTime } from '../lib/format';
 import { useDebouncedValue } from '../lib/hooks';
 
 type LabTab = 'generated' | 'submitted' | 'booked' | 'watchers' | 'history';
+type ActiveJob = {
+  batchId: string;
+  kind: 'submit' | 'book';
+  draftIds?: number[];
+};
 
 function stageProgress(stage?: string): number | undefined {
   if (stage === 'done' || stage === 'failed') return 100;
   if (stage === 'submitting' || stage === 'booking') return 60;
   if (stage === 'pending') return 10;
   return undefined;
+}
+
+function stageLabel(stage?: string): string {
+  if (stage === 'done') return 'Submitted';
+  if (stage === 'failed') return 'Failed';
+  if (stage === 'submitting') return 'Submitting…';
+  if (stage === 'pending') return 'Waiting…';
+  return 'Starting…';
 }
 
 const statusTone: Record<string, BadgeTone> = {
@@ -140,7 +153,7 @@ export function BookingLabPage() {
   const [receiptTarget, setReceiptTarget] = useState<LabClient | null>(null);
   const [pendingSubmitIds, setPendingSubmitIds] = useState<Set<number>>(new Set());
   const [pendingBookIds, setPendingBookIds] = useState<Set<number>>(new Set());
-  const [activeJob, setActiveJob] = useState<{ batchId: string; kind: 'submit' | 'book' } | null>(null);
+  const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
 
   const tab = (searchParams.get('tab') ?? 'generated') as LabTab;
   const search = searchParams.get('q') ?? '';
@@ -149,7 +162,7 @@ export function BookingLabPage() {
   const page = parseInt(searchParams.get('page') ?? '1', 10);
   const debouncedSearch = useDebouncedValue(search).toLowerCase();
 
-  const { drafts, add: addDrafts, remove: removeDrafts, clear: clearDrafts } = useLabDrafts();
+  const { drafts, add: addDrafts, remove: removeDrafts } = useLabDrafts();
 
   const setParam = (key: string, value: string) => {
     setSearchParams(
@@ -229,12 +242,13 @@ export function BookingLabPage() {
   });
 
   const startSubmitMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: ({ clients }: { clients: Record<string, unknown>[]; draftIds: number[] }) =>
       api.lab.submit({
-        clients: selectedDrafts,
+        clients,
         idempotency_key: crypto.randomUUID(),
       }),
-    onSuccess: ({ batch_id }) => setActiveJob({ batchId: batch_id, kind: 'submit' }),
+    onSuccess: ({ batch_id }, { draftIds }) =>
+      setActiveJob({ batchId: batch_id, kind: 'submit', draftIds }),
     onError: (error) => {
       toast(describeError(error, 'Could not start submission'), 'error');
       setPendingSubmitIds(new Set());
@@ -266,12 +280,21 @@ export function BookingLabPage() {
       const result = job.result as { submitted: { name: string }[]; failed: { name: string; error: string }[] } | null;
       const submitted = result?.submitted ?? [];
       const failed = result?.failed ?? [];
-      toast(`Submitted ${submitted.length} clients`);
+      if (submitted.length > 0) toast(`Submitted ${submitted.length} clients`);
       if (failed.length > 0) {
-        toast(`${failed.length} clients failed to submit`, 'error');
+        toast(
+          failed.length === 1 ? failed[0].error : `${failed.length} clients failed to submit`,
+          'error',
+        );
+      } else if (submitted.length === 0) {
+        toast('No clients were submitted', 'error');
       }
-      clearDrafts();
-      setParam('tab', 'submitted');
+      removeDrafts(new Set(
+        (activeJob.draftIds ?? []).filter(
+          (_draftId, jobIndex) => job.stages[jobIndex] === 'done',
+        ),
+      ));
+      if (submitted.length > 0) setParam('tab', 'submitted');
     } else {
       const result = job.result as { results: { booked: number; queued: number }[] } | null;
       const results = result?.results ?? [];
@@ -344,8 +367,6 @@ export function BookingLabPage() {
   }, [drafts, debouncedSearch]);
 
   const selectedClients = filteredClients.filter((c) => selected.has(c.id));
-  const selectedDrafts = drafts.filter((_, index) => selected.has(index));
-
   const toggleSelect = (id: number) => {
     setSelected((current) => {
       const next = new Set(current);
@@ -371,20 +392,30 @@ export function BookingLabPage() {
     }
   };
 
-  const handleSubmit = async () => {
-    if (selectedDrafts.length === 0) return;
-    setPendingSubmitIds(new Set(selected));
-    await startSubmitMutation.mutateAsync();
+  const handleSubmit = () => {
+    const draftIds = drafts.flatMap((_, index) => selected.has(index) ? [index] : []);
+    if (draftIds.length === 0) return;
+    setPendingSubmitIds(new Set(draftIds));
+    startSubmitMutation.mutate({
+      clients: draftIds.map((index) => drafts[index]),
+      draftIds,
+    });
   };
 
-  const handleBook = async () => {
+  const handleBook = () => {
     const bookable = selectedClients.filter((c) => c.can_book);
     if (bookable.length === 0) return;
     setPendingBookIds(new Set(bookable.map((c) => c.id)));
-    await startBookMutation.mutateAsync({
+    startBookMutation.mutate({
       client_ids: bookable.map((c) => c.id),
       idempotency_key: crypto.randomUUID(),
     });
+  };
+
+  const submitStage = (draftId: number) => {
+    if (activeJob?.kind !== 'submit') return undefined;
+    const jobIndex = activeJob.draftIds?.indexOf(draftId) ?? -1;
+    return jobIndex < 0 ? undefined : jobQuery.data?.stages[jobIndex];
   };
 
   const tabs = [
@@ -514,6 +545,7 @@ export function BookingLabPage() {
                     indeterminate={selected.size > 0 && selected.size < drafts.length}
                     onCheckedChange={toggleAllDrafts}
                     ariaLabel="Select all"
+                    disabled={pendingSubmitIds.size > 0}
                   />
                   <span className="text-sm text-slate-600">
                     {selected.size} of {drafts.length} selected
@@ -521,7 +553,7 @@ export function BookingLabPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    disabled={selected.size === 0}
+                    disabled={selected.size === 0 || pendingSubmitIds.size > 0}
                     onClick={() => removeDrafts(selected)}
                   >
                     <Trash2 className="mr-2 h-4 w-4" />
@@ -530,8 +562,8 @@ export function BookingLabPage() {
                   <Button
                     size="sm"
                     disabled={selected.size === 0 || pendingSubmitIds.size > 0}
-                    loading={pendingSubmitIds.size > 0}
-                    onClick={() => void handleSubmit()}
+                    loading={pendingSubmitIds.size > 0 || startSubmitMutation.isPending}
+                    onClick={handleSubmit}
                   >
                     Submit for appointment
                   </Button>
@@ -564,6 +596,7 @@ export function BookingLabPage() {
                               checked={selected.has(index)}
                               onCheckedChange={() => toggleSelect(index)}
                               ariaLabel={`Select ${draft.given_name as string}`}
+                              disabled={pendingSubmitIds.size > 0}
                             />
                           </td>
                           <td className="py-3 pr-4 font-medium text-slate-900">
@@ -578,17 +611,19 @@ export function BookingLabPage() {
                           </td>
                           <td className="py-3 pr-4 align-middle">
                             {pendingSubmitIds.has(index) ? (
-                              <ProgressBar
-                                value={stageProgress(
-                                  activeJob?.kind === 'submit' ? jobQuery.data?.stages[index] : undefined,
-                                )}
-                              />
+                              <div className="space-y-1">
+                                <ProgressBar value={stageProgress(submitStage(index))} />
+                                <span className="text-xs text-slate-500">
+                                  {stageLabel(submitStage(index))}
+                                </span>
+                              </div>
                             ) : null}
                           </td>
                           <td className="py-3">
                             <Button
                               size="sm"
                               variant="ghost"
+                              disabled={pendingSubmitIds.size > 0}
                               onClick={() => removeDrafts(new Set([index]))}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -657,7 +692,7 @@ export function BookingLabPage() {
                       size="sm"
                       disabled={selected.size === 0 || pendingBookIds.size > 0}
                       loading={pendingBookIds.size > 0 || startBookMutation.isPending}
-                      onClick={() => void handleBook()}
+                      onClick={handleBook}
                     >
                       Book now
                     </Button>

@@ -17,7 +17,13 @@ import type { Watcher, WatcherLoopState } from '../../../shared/types';
 import { api, queryKeys } from '../api';
 import { useAuth } from '../auth';
 import { describeError } from '../lib/errors';
-import { formatCountdown, formatInterval, formatRelativeTime, latinName } from '../lib/format';
+import {
+  formatCountdown,
+  formatDateTime,
+  formatInterval,
+  formatRelativeTime,
+  latinName,
+} from '../lib/format';
 import { useNow } from '../lib/hooks';
 import { cn } from '../lib/utils';
 import { useWatcherRuntime } from '../runtime';
@@ -65,6 +71,10 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
   const loopState: WatcherLoopState = live?.state ?? (watcher.active ? 'scheduled' : 'paused');
   const presentation = statePresentation[loopState];
   const checking = loopState === 'checking';
+  const targetReached =
+    watcher.mode === 'book' &&
+    watcher.desired_bookings > 0 &&
+    watcher.booked_count >= watcher.desired_bookings;
 
   // When any check for this watcher finishes (manual or scheduled), the
   // server-side data is stale: refresh the watcher queries so the new
@@ -96,10 +106,8 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
 
   const resumeMutation = useMutation({
     mutationFn: async () => {
+      await api.watchers.resume(watcher.id);
       await window.desktop.scheduler.resume(watcher.id);
-      if (watcher.active || loopState === 'paused') {
-        await api.watchers.resume(watcher.id);
-      }
     },
     onSuccess: () => {
       toast(`Watcher resumed · ${watcher.provider_name}`);
@@ -204,6 +212,12 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
           {watcher.last_error}
         </div>
       )}
+      {targetReached && (
+        <div className="mx-5 mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Booking target reached ({watcher.booked_count}/{watcher.desired_bookings}). Increase the
+          target in Edit before resuming.
+        </div>
+      )}
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-5 py-4 text-xs">
         <div>
@@ -224,26 +238,45 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
             )}
           </dd>
         </div>
-        <div className="col-span-2">
-          <dt className="text-slate-400">Alert email</dt>
-          <dd className="truncate font-medium text-slate-700">
-            {watcher.notification_email || '—'}
-          </dd>
-        </div>
         <div>
           <dt className="text-slate-400">Last checked</dt>
           <dd className="font-medium text-slate-700">
-            {formatRelativeTime(watcher.last_checked_at, now)}
-            {live?.lastResult?.slotsFound !== undefined &&
-              ` · ${live.lastResult.slotsFound} slot${live.lastResult.slotsFound === 1 ? '' : 's'}`}
-            {(live?.lastResult?.bookedCount ?? 0) > 0 &&
-              ` · ${live?.lastResult?.bookedCount} booked`}
+            {watcher.last_checked_at ? (
+              <>
+                <span className="block">{formatDateTime(watcher.last_checked_at)}</span>
+                <span className="block font-normal text-slate-500">
+                  {formatRelativeTime(watcher.last_checked_at, now)}
+                  {live?.lastResult?.slotsFound !== undefined &&
+                    ` · ${live.lastResult.slotsFound} slot${live.lastResult.slotsFound === 1 ? '' : 's'}`}
+                  {(live?.lastResult?.bookedCount ?? 0) > 0 &&
+                    ` · ${live?.lastResult?.bookedCount} booked`}
+                </span>
+              </>
+            ) : (
+              'Not checked yet'
+            )}
           </dd>
         </div>
         <div>
           <dt className="text-slate-400">Next check</dt>
           <dd className="font-medium text-slate-700">
-            {nextRunAt && loopState !== 'paused' ? `in ${formatCountdown(nextRunAt - now)}` : '—'}
+            {checking ? (
+              'Checking now'
+            ) : loopState === 'paused' ? (
+              <>
+                <span className="block">Paused</span>
+                <span className="block font-normal text-slate-500">Resume to schedule</span>
+              </>
+            ) : nextRunAt ? (
+              <>
+                <span className="block">{formatDateTime(new Date(nextRunAt).toISOString())}</span>
+                <span className="block font-normal text-slate-500">
+                  in {formatCountdown(nextRunAt - now)}
+                </span>
+              </>
+            ) : (
+              'Not scheduled'
+            )}
           </dd>
         </div>
         <div>
@@ -292,10 +325,10 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
           onClick={checkNow}
           loading={checking}
           disabled={busy || loopState === 'auth-expired'}
-          aria-label={`Check ${watcher.provider_name} now`}
+          aria-label={`Check ${watcher.provider_name} ${watcher.active ? 'now' : 'once'}`}
         >
           <RotateCw className="h-3.5 w-3.5" aria-hidden="true" />
-          Check now
+          {watcher.active ? 'Check now' : 'Check once'}
         </Button>
         {watcher.active && loopState !== 'captcha' ? (
           <Button
@@ -366,14 +399,25 @@ export function WatcherCard({ watcher }: WatcherCardProps) {
           ) : historyQuery.data.items.length === 0 ? (
             <p className="text-xs text-slate-400">No checks recorded yet.</p>
           ) : (
-            <ul className="max-h-36 overflow-y-auto text-xs">
+            <ul className="max-h-44 overflow-y-auto text-xs">
               {historyQuery.data.items.map((entry) => (
-                <li key={entry.id} className="flex items-center justify-between gap-2 py-1">
-                  <span className="text-slate-600">{formatRelativeTime(entry.finished_at, now)}</span>
-                  <span className="text-slate-400">{entry.slots_found} slots</span>
-                  <Badge tone={entry.success ? 'green' : 'red'}>
-                    {entry.success ? 'OK' : 'Failed'}
-                  </Badge>
+                <li key={entry.id} className="border-b border-slate-100 py-1.5 last:border-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-slate-600">
+                      {formatRelativeTime(entry.finished_at ?? entry.started_at, now)}
+                    </span>
+                    <span className="text-slate-500">
+                      {entry.slots_found === null
+                        ? 'No result'
+                        : `${entry.slots_found} slot${entry.slots_found === 1 ? '' : 's'}`}
+                    </span>
+                    <Badge tone={entry.success ? 'green' : 'red'}>
+                      {entry.success ? 'OK' : 'Failed'}
+                    </Badge>
+                  </div>
+                  {!entry.success && entry.error && (
+                    <p className="mt-1 break-words text-red-700">{entry.error}</p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -414,7 +458,6 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
   const [daysAhead, setDaysAhead] = useState(String(watcher.days_ahead));
   const [desiredBookings, setDesiredBookings] = useState(String(watcher.desired_bookings));
   const [notify, setNotify] = useState(watcher.notify);
-  const [notificationEmail, setNotificationEmail] = useState(watcher.notification_email || '');
 
   const updateMutation = useMutation({
     mutationFn: () =>
@@ -423,7 +466,6 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
         days_ahead: Number(daysAhead),
         desired_bookings: Number(desiredBookings),
         notify,
-        notification_email: notificationEmail.trim(),
       }),
     onSuccess: async () => {
       toast('Watcher settings saved');
@@ -441,7 +483,7 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
       open={open}
       onOpenChange={onOpenChange}
       title={`Edit · ${watcher.provider_name}`}
-      description="Changes apply to the server watcher and the local schedule."
+      description="Changes apply only to this device."
       footer={
         <>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>
@@ -499,19 +541,6 @@ function EditWatcherDialog({ watcher, open, onOpenChange, onSaved }: EditWatcher
             checked={notify}
             onCheckedChange={setNotify}
           />
-        </div>
-        <div>
-          <Label htmlFor={`email-${watcher.id}`}>Alert email</Label>
-          <Input
-            id={`email-${watcher.id}`}
-            type="email"
-            placeholder="email@example.com"
-            value={notificationEmail}
-            onChange={(event) => setNotificationEmail(event.target.value)}
-          />
-          <p className="mt-1 text-xs text-slate-500">
-            Leave blank to disable email alerts for this watcher.
-          </p>
         </div>
       </div>
     </Dialog>

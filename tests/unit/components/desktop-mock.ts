@@ -32,7 +32,13 @@ function createMock(): MockShape {
       get: vi.fn(),
       close: vi.fn().mockResolvedValue({ closed: true }),
     },
-    queue: { add: vi.fn(), remove: vi.fn(), bookNow: vi.fn(), progress: vi.fn() },
+    queue: {
+      get: vi.fn().mockResolvedValue({ items: [] }),
+      add: vi.fn(),
+      remove: vi.fn(),
+      bookNow: vi.fn(),
+      progress: vi.fn(),
+    },
     watchers: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),

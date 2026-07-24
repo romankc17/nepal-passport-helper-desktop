@@ -858,20 +858,22 @@ export class MockServer {
       }
     }
 
-    this.checkHistory.unshift({
-      id: this.checkHistory.length + 1,
-      started_at: watcher.last_checked_at,
-      finished_at: watcher.last_checked_at,
-      success: true,
-      error: '',
-      slots_found: slotCount,
-      request: { client_ids: selectedClientIds },
-      response: { booked: booked.length, queued: Math.max(0, selectedClientIds.length - booked.length - errors.length) },
-    });
-    this.addActivity('check', 'success', `${slotCount} slot(s) found`, {
-      provider_id: watcher.provider_id,
-      provider_name: watcher.provider_name,
-    });
+    if (slotCount > 0) {
+      this.checkHistory.unshift({
+        id: this.checkHistory.length + 1,
+        started_at: watcher.last_checked_at,
+        finished_at: watcher.last_checked_at,
+        success: true,
+        error: '',
+        slots_found: slotCount,
+        request: { client_ids: selectedClientIds },
+        response: { booked: booked.length, queued: Math.max(0, selectedClientIds.length - booked.length - errors.length) },
+      });
+      this.addActivity('check', 'success', `${slotCount} slot(s) found`, {
+        provider_id: watcher.provider_id,
+        provider_name: watcher.provider_name,
+      });
+    }
     this.ok(res, {
       watcher: this.watcherJson(watcher),
       checked: true,

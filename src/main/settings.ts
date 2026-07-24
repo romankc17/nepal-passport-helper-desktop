@@ -1,5 +1,5 @@
 import type { App } from 'electron';
-import type { AppSettings, AppSettingsPatch } from '../shared/types';
+import type { AppSettings, AppSettingsPatch, LocalWatcherSnapshot } from '../shared/types';
 import type { JsonStore } from './store';
 import { isE2E } from './e2e';
 
@@ -17,7 +17,7 @@ export interface StoredConfig {
     access: { mode: string; providers: { id: number; name: string }[]; booking_lab: boolean };
     defaults: { interval_seconds: number };
   } | null;
-  watcherSnapshot: unknown | null;
+  watcherSnapshot: LocalWatcherSnapshot | null;
 }
 
 export const defaultSettings: AppSettings = {

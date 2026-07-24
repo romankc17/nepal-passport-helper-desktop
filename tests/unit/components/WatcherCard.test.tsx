@@ -2,8 +2,9 @@
 import { act, cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Watcher } from '../../../src/shared/types';
+import type { Watcher, WatcherRuntime } from '../../../src/shared/types';
 import { WatcherCard } from '../../../src/renderer/src/components/WatcherCard';
+import { formatDateTime } from '../../../src/renderer/src/lib/format';
 import { WatcherRuntimeProvider } from '../../../src/renderer/src/runtime';
 import { installDesktopMock, renderWithProviders } from './test-utils';
 
@@ -31,7 +32,7 @@ const watcher: Watcher = {
   created_at: '2026-07-20T00:00:00Z',
 };
 
-function mockSignedIn(runtimeEntries: { watcherId: number; state: string }[]) {
+function mockSignedIn(runtimeEntries: WatcherRuntime[]) {
   const desktop = installDesktopMock();
   desktop.auth.getSession = vi.fn().mockResolvedValue({
     user: { id: 1, username: 'admin', is_staff: true },
@@ -67,6 +68,21 @@ describe('WatcherCard', () => {
     expect(container.querySelector('.animate-pulse')).not.toBeNull();
   });
 
+  it('shows exact last and next check times from the watcher and scheduler', async () => {
+    const nextRunAt = Date.now() + 60_000;
+    mockSignedIn([{ watcherId: 88, state: 'scheduled', nextRunAt }]);
+    renderWithProviders(
+      <WatcherRuntimeProvider>
+        <WatcherCard watcher={{ ...watcher, last_checked_at: '2026-07-24T04:00:00Z' }} />
+      </WatcherRuntimeProvider>,
+    );
+
+    expect(await screen.findByText(formatDateTime('2026-07-24T04:00:00Z'))).toBeInTheDocument();
+    expect(
+      await screen.findByText(formatDateTime(new Date(nextRunAt).toISOString())),
+    ).toBeInTheDocument();
+  });
+
   it('shows the CAPTCHA banner with an actionable explanation', async () => {
     mockSignedIn([{ watcherId: 88, state: 'captcha' }]);
     renderCard();
@@ -82,7 +98,8 @@ describe('WatcherCard', () => {
         <WatcherCard watcher={{ ...watcher, active: false }} />
       </WatcherRuntimeProvider>,
     );
-    expect(await screen.findByText('Paused')).toBeInTheDocument();
+    expect((await screen.findAllByText('Paused')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Check Rupandehi once' })).toBeInTheDocument();
   });
 
   it('shows queued and booked counts', async () => {
@@ -99,6 +116,34 @@ describe('WatcherCard', () => {
     await waitFor(() => {
       expect(desktop.scheduler.checkNow).toHaveBeenCalledWith(88);
     });
+  });
+
+  it('resumes an inactive watcher after a one-off check leaves it idle', async () => {
+    const desktop = mockSignedIn([{ watcherId: 88, state: 'idle' }]);
+    desktop.watchers.resume = vi.fn().mockResolvedValue({ watcher: { ...watcher, active: true } });
+    renderWithProviders(
+      <WatcherRuntimeProvider>
+        <WatcherCard watcher={{ ...watcher, active: false }} />
+      </WatcherRuntimeProvider>,
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Resume Rupandehi' }));
+
+    await waitFor(() => expect(desktop.watchers.resume).toHaveBeenCalledWith(88));
+    expect(desktop.scheduler.resume).toHaveBeenCalledWith(88);
+  });
+
+  it('explains when an auto-book watcher stopped because its target was reached', async () => {
+    mockSignedIn([]);
+    renderWithProviders(
+      <WatcherRuntimeProvider>
+        <WatcherCard
+          watcher={{ ...watcher, active: false, desired_bookings: 13, booked_count: 13 }}
+        />
+      </WatcherRuntimeProvider>,
+    );
+
+    expect(await screen.findByText(/Booking target reached \(13\/13\)/)).toBeInTheDocument();
   });
 
   it('explains why a manual check did not start instead of staying silent', async () => {
@@ -120,7 +165,38 @@ describe('WatcherCard', () => {
       .mockResolvedValue({ items: [], page: 1, page_size: 25, total: 0 });
     renderCard();
     await userEvent.click(screen.getByRole('button', { name: 'History for Rupandehi' }));
-    expect(await screen.findByText(/Checking now/)).toBeInTheDocument();
+    expect(
+      await screen.findByText('Checking now — results appear here when it finishes…'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows incomplete and failed history records without blank values', async () => {
+    const desktop = mockSignedIn([]);
+    desktop.watchers.history = vi.fn().mockResolvedValue({
+      items: [
+        {
+          id: 1,
+          started_at: '2026-07-21T10:00:00Z',
+          finished_at: null,
+          success: false,
+          error: 'Official portal timed out',
+          slots_found: null,
+          request: {},
+          response: {},
+        },
+      ],
+      page: 1,
+      page_size: 25,
+      total: 1,
+    });
+    renderCard();
+
+    await userEvent.click(screen.getByRole('button', { name: 'History for Rupandehi' }));
+
+    expect(await screen.findByText('No result')).toBeInTheDocument();
+    expect(screen.getByText('Official portal timed out').closest('li')).not.toHaveTextContent(
+      'never',
+    );
   });
 
   it('refreshes the history when a check finishes', async () => {
