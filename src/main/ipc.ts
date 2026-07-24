@@ -33,7 +33,7 @@ import {
   validateImportPreviewInput,
   validateWptId,
 } from '../shared/ipc-contract';
-import type { AppSettings, SessionInfo, WatcherRuntime } from '../shared/types';
+import type { AppSettings, BookNowResult, SessionInfo, WatcherRuntime } from '../shared/types';
 import { ApiClient, ApiError, AUTH_EXPIRED_CODES } from './api-client';
 import { WatcherScheduler } from './scheduler';
 import { SettingsManager, StoredConfig } from './settings';
@@ -105,10 +105,12 @@ function handle<Args extends unknown[], Result>(
 
 export function registerIpc(deps: IpcDeps): void {
   const { api, scheduler, settings, store, vault } = deps;
+  const bookNowRequests = new Map<string, Promise<BookNowResult>>();
 
   // --- Auth ---
 
   handle(channels.authLogin, async (raw: unknown): Promise<SessionInfo> => {
+    bookNowRequests.clear();
     deps.localQueue.clear();
     const input = validateLoginInput(raw);
     if (input.serverUrl && deps.isDev) {
@@ -127,6 +129,7 @@ export function registerIpc(deps: IpcDeps): void {
   });
 
   handle(channels.authLogout, async (): Promise<{ signedOut: true }> => {
+    bookNowRequests.clear();
     deps.stopWatchers();
     deps.localQueue.clear();
     store.update({ sessionSnapshot: null });
@@ -299,70 +302,82 @@ export function registerIpc(deps: IpcDeps): void {
   });
   handle(channels.queueBookNow, async (raw: unknown) => {
     const input = validateBookNowInput(raw);
-    const added = await addToLocalQueue(input);
-    const check = isE2E
-      ? await api.watchersCheck(added.watcher.id, {
-        force: true,
-        slots: input.slots,
-        client_ids: input.client_ids,
-      })
-      : await deps.officialWorker.checkWatcher(
-        added.watcher.id, true, input.slots, input.client_ids,
-      );
+    const cached = bookNowRequests.get(input.idempotency_key);
+    if (cached) return cached;
 
-    if (isE2E) {
-      const bookedByClient = new Map(
-        (check.booked as Array<{ client_id: number; booking_id?: number; appointment?: { date: string; start_time: string } }>).map((item) => [item.client_id, item]),
-      );
-      const failedByClient = new Map(
-        (check.errors as Array<{ client_id?: number; message?: string }>).map((item) => [item.client_id, item]),
-      );
-      for (const clientId of input.client_ids) {
-        const booking = bookedByClient.get(clientId);
-        if (booking?.appointment) {
-          deps.localQueue.update(clientId, {
-            status: 'booked',
-            official_application_id: '',
-            appointment: booking.appointment,
-            error: undefined,
-          });
-        } else {
-          const errorItem = failedByClient.get(clientId);
-          if (errorItem?.message) {
-            deps.localQueue.update(clientId, { status: 'failed', error: errorItem.message });
+    const request = (async (): Promise<BookNowResult> => {
+      const added = await addToLocalQueue(input);
+      const check = isE2E
+        ? await api.watchersCheck(added.watcher.id, {
+          force: true,
+          slots: input.slots,
+          client_ids: input.client_ids,
+        })
+        : await deps.officialWorker.checkWatcher(
+          added.watcher.id, true, input.slots, input.client_ids,
+        );
+
+      if (isE2E) {
+        const bookedByClient = new Map(
+          (check.booked as Array<{ client_id: number; booking_id?: number; appointment?: { date: string; start_time: string } }>).map((item) => [item.client_id, item]),
+        );
+        const failedByClient = new Map(
+          (check.errors as Array<{ client_id?: number; message?: string }>).map((item) => [item.client_id, item]),
+        );
+        for (const clientId of input.client_ids) {
+          const booking = bookedByClient.get(clientId);
+          if (booking?.appointment) {
+            deps.localQueue.update(clientId, {
+              status: 'booked',
+              official_application_id: '',
+              appointment: booking.appointment,
+              error: undefined,
+            });
+          } else {
+            const errorItem = failedByClient.get(clientId);
+            if (errorItem?.message) {
+              deps.localQueue.update(clientId, { status: 'failed', error: errorItem.message });
+            }
           }
         }
       }
-    }
 
-    const bookedByClient = new Map(
-      (check.booked as Array<{ client_id: number; booking_id?: number }>).map((item) => [item.client_id, item]),
-    );
-    const results = input.client_ids.map((clientId) => {
-      const item = deps.localQueue.get(clientId);
-      const booking = bookedByClient.get(clientId);
-      if (item?.status === 'booked' && item.appointment) {
+      const bookedByClient = new Map(
+        (check.booked as Array<{ client_id: number; booking_id?: number }>).map((item) => [item.client_id, item]),
+      );
+      const results = input.client_ids.map((clientId) => {
+        const item = deps.localQueue.get(clientId);
+        const booking = bookedByClient.get(clientId);
+        if (item?.status === 'booked' && item.appointment) {
+          return {
+            client_id: clientId,
+            booking_id: booking?.booking_id,
+            outcome: 'booked' as const,
+            appointment: item.appointment,
+          };
+        }
+        if (item?.status === 'failed') {
+          return {
+            client_id: clientId,
+            outcome: 'failed' as const,
+            error: item.error ?? 'Official booking failed',
+          };
+        }
         return {
           client_id: clientId,
-          booking_id: booking?.booking_id,
-          outcome: 'booked' as const,
-          appointment: item.appointment,
+          outcome: 'queued' as const,
+          error: added.skipped.find((entry) => entry.client_id === clientId)?.reason,
         };
-      }
-      if (item?.status === 'failed') {
-        return {
-          client_id: clientId,
-          outcome: 'failed' as const,
-          error: item.error ?? 'Official booking failed',
-        };
-      }
-      return {
-        client_id: clientId,
-        outcome: 'queued' as const,
-        error: added.skipped.find((entry) => entry.client_id === clientId)?.reason,
-      };
-    });
-    return { watcher: check.watcher, results };
+      });
+      return { watcher: check.watcher, results };
+    })();
+    bookNowRequests.set(input.idempotency_key, request);
+    try {
+      return await request;
+    } catch (error) {
+      bookNowRequests.delete(input.idempotency_key);
+      throw error;
+    }
   });
   handle(channels.queueProgress, (raw: unknown) => asIdArray(raw, 'clientIds').map((clientId) => {
     const item = deps.localQueue.get(clientId);

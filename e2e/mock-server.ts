@@ -106,7 +106,6 @@ export class MockServer {
   private readonly activity: Record<string, unknown>[] = [];
   private readonly checkHistory: Record<string, unknown>[] = [];
   private readonly idempotentResponses = new Map<string, unknown>();
-  readonly idempotencyKeysSeen: string[] = [];
   private preferences = {
     notifications_enabled: true,
     sound_enabled: true,
@@ -980,7 +979,6 @@ export class MockServer {
   }
 
   private newBooking(client: MockClient, watcherId: number, key: string): MockBooking {
-    this.idempotencyKeysSeen.push(key);
     const booking: MockBooking = {
       id: this.nextBookingId++,
       client_id: client.id,

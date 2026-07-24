@@ -48,7 +48,6 @@ test.describe('documentation screenshots', () => {
     await shot('watchers');
 
     await goTo(ctx.page, 'Booking Queue');
-    await expect(ctx.page.getByText('Ready to book')).toBeVisible();
     await expect(ctx.page.getByText('SITA KUMARI')).toBeVisible({ timeout: 15000 });
     await shot('queue');
 

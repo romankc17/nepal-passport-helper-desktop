@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { api, onUpdateStatus } from '../api';
 import type { UpdateStatus } from '../../../shared/types';
 import { cn } from '../lib/utils';
+import { Badge } from './Badge';
 import { Button } from './Button';
 
 type ConnectionStatus = 'online' | 'offline';
@@ -65,6 +66,12 @@ export function TopBar({ userName, sessionOffline, onSignOut, signingOut, onRefr
         <span className="text-xs text-slate-500">{online ? 'Connected' : 'Offline'}</span>
       </div>
       <div className="flex items-center gap-2">
+        {updateStatus.type === 'available' && (
+          <Badge tone="blue">Update available</Badge>
+        )}
+        {updateStatus.type === 'downloading' && (
+          <Badge tone="blue">Downloading update… {Math.round(updateStatus.percent)}%</Badge>
+        )}
         {updateStatus.type === 'downloaded' && (
           <Button
             variant="primary"

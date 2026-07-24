@@ -9,7 +9,6 @@ test.describe('booking flow', () => {
     ctx = await launchTestApp();
     await loginViaUI(ctx.page);
     await goTo(ctx.page, 'Booking Queue');
-    await expect(ctx.page.getByText('Ready to book')).toBeVisible();
     await expect(ctx.page.getByText('RAM BAHADUR')).toBeVisible({ timeout: 15000 });
   });
 

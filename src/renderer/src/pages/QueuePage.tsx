@@ -43,9 +43,11 @@ function clientMatches(
   search: string,
   typeFilter: string,
   statusFilter: string,
+  isQueued: boolean,
 ): boolean {
   if (search && !client.full_name.toLowerCase().includes(search)) return false;
   if (typeFilter && client.application_type !== typeFilter) return false;
+  if (statusFilter === 'queued') return isQueued;
   if (statusFilter && client.desktop_status !== statusFilter) return false;
   return true;
 }
@@ -95,7 +97,6 @@ export function QueuePage() {
 
   const search = searchParams.get('q') ?? '';
   const locationFilter = searchParams.get('location') ?? '';
-  const countryFilter = searchParams.get('country') ?? '';
   const typeFilter = searchParams.get('type') ?? '';
   const statusFilter = searchParams.get('status') ?? '';
   const debouncedSearch = useDebouncedValue(search).toLowerCase();
@@ -182,16 +183,10 @@ export function QueuePage() {
 
   const visibleGroups = groups
     .filter((group) => !locationFilter || String(group.provider_id) === locationFilter)
-    .filter(
-      (group) =>
-        !countryFilter ||
-        String(group.country_id ?? group.clients[0]?.appointment_country_id ?? '222') ===
-          countryFilter,
-    )
     .map((group) => ({
       ...group,
       clients: group.clients.filter((client) =>
-        clientMatches(client, debouncedSearch, typeFilter, statusFilter),
+        clientMatches(client, debouncedSearch, typeFilter, statusFilter, queuedClientIds.has(client.id)),
       ),
     }))
     .filter((group) => group.clients.length > 0);
@@ -379,7 +374,7 @@ export function QueuePage() {
 
       <h2 className="mb-3 text-sm font-semibold text-slate-700">Add clients to queue</h2>
       <Card className="mb-6">
-        <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <Input
             aria-label="Search clients"
             placeholder="Search name…"
@@ -399,16 +394,6 @@ export function QueuePage() {
             ]}
           />
           <Select
-            ariaLabel="Filter by country"
-            value={countryFilter || 'all'}
-            onValueChange={(value) => setParam('country', value === 'all' ? '' : value)}
-            options={[
-              { value: 'all', label: 'All countries' },
-              { value: '222', label: 'Nepal' },
-              { value: '307', label: 'Other (missions)' },
-            ]}
-          />
-          <Select
             ariaLabel="Filter by application type"
             value={typeFilter || 'all'}
             onValueChange={(value) => setParam('type', value === 'all' ? '' : value)}
@@ -423,7 +408,7 @@ export function QueuePage() {
             onValueChange={(value) => setParam('status', value === 'all' ? '' : value)}
             options={[
               { value: 'all', label: 'All statuses' },
-              ...['fresh', 'ready', 'incomplete', 'booked', 'not_permitted', 'cancelled'].map(
+              ...['fresh', 'ready', 'booked', 'queued'].map(
                 (status) => ({ value: status, label: status.replace('_', ' ') }),
               ),
             ]}
@@ -431,7 +416,7 @@ export function QueuePage() {
         </CardBody>
       </Card>
 
-      <h3 className="mb-3 text-sm font-semibold text-slate-700">Clients by office</h3>
+      <h3 className="mb-3 text-sm font-semibold text-slate-700">Ready to book</h3>
       {readyQuery.isPending ? (
         <div className="mb-8 flex flex-col gap-4">
           {[0, 1].map((index) => (

@@ -64,6 +64,39 @@ function ConnectivityDot({ online, label }: { online: boolean; label: string }) 
   );
 }
 
+function BarChart({
+  rows,
+}: {
+  rows: { label: string; value: number; tone: string }[];
+}) {
+  const max = Math.max(1, ...rows.map((row) => row.value));
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => (
+        <div key={row.label}>
+          <div className="mb-1 flex items-center justify-between text-xs">
+            <span className="text-slate-500">{row.label}</span>
+            <span className="font-semibold text-slate-700">{row.value}</span>
+          </div>
+          <div
+            className="h-2 overflow-hidden rounded-full bg-slate-100"
+            role="meter"
+            aria-label={`${row.label}: ${row.value}`}
+            aria-valuemin={0}
+            aria-valuemax={max}
+            aria-valuenow={row.value}
+          >
+            <div
+              className={`h-full rounded-full ${row.tone}`}
+              style={{ width: `${(row.value / max) * 100}%` }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function OverviewPage() {
   const now = useNow(1000);
   const backendOnline = useNetStatus();
@@ -93,6 +126,17 @@ export function OverviewPage() {
   const watcherName = new Map(
     (overview?.upcoming_checks ?? []).map((watcher) => [watcher.watcher_id, watcher.provider_name]),
   );
+  const queueItems = localQueueQuery.data?.items ?? [];
+  const queueRows = [
+    { label: 'Waiting', value: queueItems.filter((item) => item.status === 'queued').length, tone: 'bg-primary' },
+    {
+      label: 'In progress',
+      value: queueItems.filter((item) => item.status === 'submitting' || item.status === 'booking').length,
+      tone: 'bg-amber',
+    },
+    { label: 'Booked', value: queueItems.filter((item) => item.status === 'booked').length, tone: 'bg-success' },
+    { label: 'Failed', value: queueItems.filter((item) => item.status === 'failed').length, tone: 'bg-danger' },
+  ];
 
   return (
     <div>
@@ -159,6 +203,48 @@ export function OverviewPage() {
           tone="bg-danger"
           to="/activity"
         />
+      </div>
+      <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader
+            title="Today's outcomes"
+            action={
+              <Link to="/activity" className="text-xs font-medium text-primary hover:underline">
+                View activity
+              </Link>
+            }
+          />
+          <CardBody>
+            {loading ? (
+              <Skeleton className="h-28 w-full" />
+            ) : (
+              <BarChart
+                rows={[
+                  { label: 'Slots found', value: overview?.slots_found_today ?? 0, tone: 'bg-amber' },
+                  { label: 'Booked', value: overview?.booked_today ?? 0, tone: 'bg-success' },
+                  { label: 'Failed', value: overview?.failed_today ?? 0, tone: 'bg-danger' },
+                ]}
+              />
+            )}
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader
+            title="Queue status"
+            action={
+              <Link to="/queue" className="text-xs font-medium text-primary hover:underline">
+                Open queue
+              </Link>
+            }
+          />
+          <CardBody>
+            {localQueueQuery.isPending ? (
+              <Skeleton className="h-28 w-full" />
+            ) : (
+              <BarChart rows={queueRows} />
+            )}
+          </CardBody>
+        </Card>
       </div>
       <div className="mt-6">
         <FavoriteLocationsCard />

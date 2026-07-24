@@ -35,10 +35,11 @@ const statusTone: Record<string, BadgeTone> = {
   cancelled: 'gray',
 };
 
-const statusOptions = ['fresh', 'ready', 'incomplete', 'queued', 'booked', 'not_permitted', 'cancelled'];
 const typeOptions = ['First issuance (new)', 'Passport renewal', 'Replacement (lost/stolen)'];
 const tabs = [
   { value: 'unbooked', label: 'Unbooked' },
+  { value: 'fresh', label: 'Fresh' },
+  { value: 'ready', label: 'Ready' },
   { value: 'booked', label: 'Booked' },
   { value: 'all', label: 'All' },
 ] as const;
@@ -81,7 +82,6 @@ export function ClientsPage() {
   const tab = tabs.some(({ value }) => value === searchParams.get('tab'))
     ? (searchParams.get('tab') as (typeof tabs)[number]['value'])
     : 'unbooked';
-  const statusFilter = searchParams.get('status') ?? '';
   const typeFilter = searchParams.get('type') ?? '';
   const providerFilter = searchParams.get('provider') ?? '';
   const docsFilter = searchParams.get('docs') ?? '';
@@ -106,7 +106,7 @@ export function ClientsPage() {
       page,
       page_size: PAGE_SIZE,
       q: debouncedSearch || undefined,
-      status: statusFilter || undefined,
+      status: tab === 'fresh' || tab === 'ready' ? tab : undefined,
       application_type: typeFilter || undefined,
       provider_id: providerFilter ? Number(providerFilter) : undefined,
       booked: tab === 'all' ? undefined : tab === 'booked',
@@ -116,7 +116,7 @@ export function ClientsPage() {
         page,
         page_size: PAGE_SIZE,
         q: debouncedSearch || undefined,
-        status: statusFilter || undefined,
+        status: tab === 'fresh' || tab === 'ready' ? tab : undefined,
         application_type: typeFilter || undefined,
         provider_id: providerFilter ? Number(providerFilter) : undefined,
         booked: tab === 'all' ? undefined : tab === 'booked',
@@ -311,24 +311,12 @@ export function ClientsPage() {
       </div>
 
       <Card className="mb-4">
-        <div className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 px-4 py-3 md:grid-cols-4">
           <Input
             aria-label="Search clients"
             placeholder="Search name…"
             value={search}
             onChange={(event) => setParam('q', event.target.value)}
-          />
-          <Select
-            ariaLabel="Filter by status"
-            value={statusFilter || 'all'}
-            onValueChange={(value) => setParam('status', value === 'all' ? '' : value)}
-            options={[
-              { value: 'all', label: 'All statuses' },
-              ...statusOptions.map((status) => ({
-                value: status,
-                label: status.replace('_', ' '),
-              })),
-            ]}
           />
           <Select
             ariaLabel="Filter by application type"

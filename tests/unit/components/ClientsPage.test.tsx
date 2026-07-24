@@ -29,15 +29,20 @@ const readyClient: ClientSummary = {
 describe('ClientsPage', () => {
   afterEach(cleanup);
 
-  it('defaults to unbooked and switches between booking filters', async () => {
+  it('filters booking and workflow status with tabs', async () => {
     const desktop = installDesktopMock();
     desktop.clients.list = vi.fn().mockResolvedValue({ items: [], page: 1, page_size: 25, total: 0 });
     desktop.clients.readyByLocation = vi.fn().mockResolvedValue([]);
     renderWithProviders(<ClientsPage />, { route: '/clients' });
 
     await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: false })));
+    expect(screen.queryByRole('combobox', { name: 'Filter by status' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Fresh' }));
+    await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: false, status: 'fresh' })));
+    await userEvent.click(screen.getByRole('tab', { name: 'Ready' }));
+    await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: false, status: 'ready' })));
     await userEvent.click(screen.getByRole('tab', { name: 'Booked' }));
-    await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: true })));
+    await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: true, status: undefined })));
     await userEvent.click(screen.getByRole('tab', { name: 'All' }));
     await waitFor(() => expect(desktop.clients.list).toHaveBeenLastCalledWith(expect.objectContaining({ booked: undefined })));
   });
